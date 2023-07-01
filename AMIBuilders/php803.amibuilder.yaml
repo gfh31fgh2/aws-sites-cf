@@ -1,0 +1,711 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Xxxxxx PHP-8.0-rev3 App AMI Builder stack'
+Parameters:
+  AmiBuilderInstanceType:
+    Description: 'PHP 8.0-rev3 EC2 instance type'
+    Type: String
+    Default: 't3.nano'
+    AllowedValues:
+    - t2.nano
+    - t2.micro
+    - t2.small
+    - t2.large
+    - t3.nano
+    ConstraintDescription: 'must be a valid EC2 instance type.'
+  KeyName:
+    Description: 'Name of an existing EC2 KeyPair to enable SSH access to the instances'
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: 'must be the name of an existing EC2 KeyPair.'
+    Default: xxxxxxxxxxxx
+  AMIBuilderModuleName:
+    Description: 'The name of the JavaScript file (js in zip) for creating AMI from instance'
+    Type: String
+    Default: 'lambda-create-ami'
+  AssetsBucketName:
+    Description: 'The name of the bucket that contains your packaged source'
+    Type: String
+    Default: 'xx-systemzzz'
+  AMIBuilderS3Key:
+    Description: 'The name of the ZIP package'
+    Type: String
+    Default: 'lambda-create-ami.zip'
+  NetworkStackName:
+    Description: 'Name of an active CloudFormation stack that contains the networking resources'
+    Type: String
+    MinLength: 1
+    MaxLength: 255
+    AllowedPattern: '^[a-zA-Z][-a-zA-Z0-9]*$'
+    Default: Xxxxxx-NetworkServices-DWD4USGLGTLH
+  ServiceADPW:
+    NoEcho: "true"
+    Description: "MS AD service user password (xxxxxxxxxxxxdap)"
+    Type: "String"
+  MicrosoftADName:
+    Description: 'The domain name of ActiveDirectory domain in CAPITAL LETTERS'
+    Type: String
+    Default: 'AD.xxxxxxx.cloud'
+
+Mappings:
+  AMIforPHP:
+    'us-east-1':
+      AMI: ami-xxxxx
+
+Resources:
+  WaitHandlePendingAMI:
+    Type: 'AWS::CloudFormation::WaitConditionHandle'
+
+  WaitConditionPendingAMI:
+    Type: 'AWS::CloudFormation::WaitCondition'
+    Properties:
+      Handle: !Ref WaitHandlePendingAMI
+      Timeout: 7200
+
+  WaitHandleAMIComplete:
+    Type: 'AWS::CloudFormation::WaitConditionHandle'
+
+  WaitConditionAMIComplete:
+    Type: 'AWS::CloudFormation::WaitCondition'
+    Properties:
+      Handle: !Ref WaitHandleAMIComplete
+      Timeout: 7200
+
+  PHP80rev3AmiBuilderIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - sts:AssumeRole
+      Path: '/'
+      Policies:
+      - PolicyName: PHP80rev3AmiBuilderPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${AssetsBucketName}/amibuilder-dependencies/*'
+          - Effect: 'Allow'
+            Action:
+            - 'logs:CreateLogStream'
+            - 'logs:CreateLogGroup'
+            - 'logs:PutLogEvents'
+            - 'logs:DescribeLogStreams'
+            Resource:
+            - !GetAtt 'SysLogGroup.Arn'
+
+  SysLogGroup:
+    DeletionPolicy: Retain
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Join
+        - ''
+        -
+          - 'AMIBuilder-80-rev3-App-Syslog-'
+          - !Select [3, !Split ["-", !Ref "AWS::StackName"]]
+          - !Select [4, !Split ["-", !Ref "AWS::StackName"]]
+
+  PHP80rev3AmiBuilderProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: '/'
+      Roles:
+      - !Ref PHP80rev3AmiBuilderIAMRole
+
+  PHP80rev3AmiBuilderSG:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: 'Xxxxxx PHP-8.0-rev3 AMI Builder Security group'
+      VpcId:
+        'Fn::ImportValue':
+          !Sub '${NetworkStackName}-VPCId'
+      Tags:
+      - Key: Name
+        Value: PHP80rev3AmiBuilderSG
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        FromPort: 0
+        ToPort: 65535
+        CidrIp:
+          'Fn::ImportValue':
+            !Sub '${NetworkStackName}-VPCcidr'
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: '0.0.0.0/0'
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: '0.0.0.0/0'
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp:
+          'Fn::ImportValue':
+            !Sub '${NetworkStackName}-VPCcidr'
+
+  PHP80rev3Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      IamInstanceProfile: !Ref PHP80rev3AmiBuilderProfile
+      Tags:
+      - Key: Name
+        Value: !Ref 'AWS::StackName'
+      ImageId: !FindInMap [AMIforPHP, !Ref 'AWS::Region', AMI]
+      SecurityGroupIds:
+      - !Ref PHP80rev3AmiBuilderSG
+      InstanceType: !Ref AmiBuilderInstanceType
+      KeyName: !Ref KeyName
+      SubnetId:
+        'Fn::ImportValue':
+          !Sub '${NetworkStackName}-XxxxxSubnet1'
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash -xe
+          export DEBIAN_FRONTEND=noninteractive
+          # mass deleted
+          python3 -Wignore /usr/local/bin/cfn-init --stack ${AWS::StackName} --resource PHP80rev3Instance --configsets SetupConfigSet --region ${AWS::Region}
+          sync
+          sync
+          history -c
+          echo -e "### Signal for AMI capture"
+          cfn-signal --exit-code=$? -i waitingforami '${WaitHandlePendingAMI}'
+    Metadata:
+      Comment: 'PHP-8.0-rev3 Ami Builder'
+      'AWS::CloudFormation::Authentication':
+        S3AccessCreds:
+          type: S3
+          buckets:
+          - !Ref AssetsBucketName
+          roleName: !Ref PHP80rev3AmiBuilderIAMRole
+      'AWS::CloudFormation::Init':
+        configSets:
+          SetupConfigSet:
+            - base-packages
+            - www-packages
+            - setup-aws-cli
+#            - setup-aws-cli-v2
+            # mass deleted
+        base-packages:
+          packages:
+            apt:
+              cachefilesd: []
+              libc6-dbg: []
+              libcurl4-gnutls-dev: []
+              libmhash2: []
+              libxml2-dev: []
+              libyajl-dev: []
+              linux-tools-generic: []
+              mailutils: []
+              mc: []
+              nfs-common: []
+              ntpdate: []
+              packagekit: []
+              parallel: []
+              postfix: []
+              realmd: []
+              syslinux-utils: []
+        www-packages:
+          packages:
+            apt:
+              apache2: []
+              apache2-dev: []
+              fio: []
+              imagemagick: []
+              jq: []
+              libapache2-mod-php8.0: []
+              libapache2-mpm-itk: []
+              mysql-client: []
+              nodejs: []
+              php-pear: []
+              php8.0: []
+              php8.0-bcmath: []
+              php8.0-cli: []
+              php8.0-curl: []
+              php8.0-dev: []
+              php8.0-gd: []
+              php8.0-gmp: []
+              php8.0-iconv: []
+              php8.0-imagick: []
+              php8.0-intl: []
+              php8.0-ldap: []
+              php8.0-mbstring: []
+              php8.0-memcache: []
+              php8.0-mysql: []
+              php8.0-phpdbg: []
+              php8.0-redis: []
+              php8.0-soap: []
+              php8.0-sqlite3: []
+              php8.0-xml: []
+              php8.0-xsl: []
+              php8.0-zip: []
+              python-setuptools: []
+              varnish: []
+          services:
+            sysvinit:
+              apache2:
+                enabled: false
+                ensureRunning: false
+        setup-aws-cli:
+          packages:
+            apt:
+              python3-pip: []
+          commands:
+            00_install_aws_cli:
+              command: "pip3 install awscli --upgrade"
+        setup-aws-cli-v2:
+          commands:
+            00_install_aws_cli_v2:
+              command: "pip3 install awscli --upgrade"
+        setupntp:
+          packages:
+            apt:
+              chrony: []
+              ntpdate: []
+          files:
+            '/etc/chrony/chrony.conf':
+              content: !Sub |
+                server xxxxxx prefer iburst
+                # mass deleted
+                rtconutc
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_ntp:
+              command: !Sub |
+                service chrony stop
+                ntpdate xxxxxx
+                service chrony start
+          services:
+            sysvinit:
+              chrony:
+                enabled: true
+                ensureRunning: true
+                files:
+                - '/etc/chrony/chrony.conf'
+        setup-amazon-cloudwatch-agent:
+          files:
+            '/tmp/AmazonCloudWatchAgent.zip':
+              source: !Sub 'https://s3.amazonaws.com/amazoncloudwatch-agent/linux/amd64/latest/AmazonCloudWatchAgent.zip'
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/AmazonCloudWatchAgent.config':
+              content: !Sub |
+                {
+                        "logs": {
+                                "logs_collected": {
+                                        "files": {
+                                                "collect_list": [
+                                                        {
+                                                                "file_path": "/var/log/syslog",
+                                                                "log_group_name": "${SysLogGroup}",
+                                                                "log_stream_name": "{instance_id}",
+                                                                "timestamp_format": "%b %-d %H:%M:%S"
+                                                        }
+                                                ]
+                                        }
+                                }
+                        }
+                }
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/logrotate.d/cloudwatch-sites':
+              content: |
+                /var/log/cloudwatch-sites/*.log {
+                  missingok
+                  notifempty
+                  daily
+                  create 600
+                  delaycompress
+                  compress
+                  rotate 7
+                }
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup-amazon-cloudwatch-agent:
+              command: !Sub |
+                cd /tmp
+                unzip AmazonCloudWatchAgent.zip
+                ./install.sh
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/tmp/AmazonCloudWatchAgent.config -s
+                systemctl enable amazon-cloudwatch-agent
+                service amazon-cloudwatch-agent restart
+        setup-aws-ssm-agent:
+          files:
+            '/tmp/amazon-ssm-agent.deb':
+              source:
+                'Fn::Sub': "https://amazon-ssm-${AWS::Region}.s3.amazonaws.com/latest/debian_amd64/amazon-ssm-agent.deb"
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_aws_ssm_agent:
+              command:
+                'Fn::Sub': |
+                  dpkg -i /tmp/amazon-ssm-agent.deb
+                  systemctl enable amazon-ssm-agent.service
+                  sed -i '/console formatid="fmtinfo"/d' /etc/amazon/ssm/seelog.xml.template
+                  mv /etc/amazon/ssm/seelog.xml.template /etc/amazon/ssm/seelog.xml
+                  service amazon-ssm-agent restart
+        setup-postfix:
+          packages:
+            apt:
+              mailutils: []
+              postfix: []
+          commands:
+            00_setuppostfix:
+              command: !Sub |
+                echo "Xxxxxx.net" > /etc/mailname
+                postconf -e "smtp_sasl_auth_enable = yes"
+                deleted
+                echo -e "xxx" > /etc/postfix/saslpasswd
+                postmap /etc/postfix/saslpasswd
+                rm -rf /etc/postfix/saslpasswd
+                /etc/init.d/postfix restart
+        setup-apache-php:
+          files:
+            '/etc/apache2/default_robots.txt':
+              content: !Sub |
+                # robots.txt
+                User-agent: *
+                Disallow:
+                Disallow: /busa/
+                Disallow: /admin/
+                Disallow: /treetop/
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/apache2/default_favicon.ico':
+              source: !Sub 'https://s3.amazonaws.com/${AssetsBucketName}/favicon.ico'
+              mode: '000644'
+              owner: root
+              group: root
+              authentication: "S3AccessCreds"
+            '/etc/apache2/403.htm':
+              source: !Sub 'https://s3.amazonaws.com/${AssetsBucketName}/403.htm'
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/apache2/404.htm':
+              source: !Sub 'https://s3.amazonaws.com/${AssetsBucketName}/404.htm'
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/apache2/conf-available/xxxxx.conf':
+              content: !Sub |
+                KeepAlive Off
+                # mass deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/apache2/conf-enabled/xxxxx.conf':
+              content: "/etc/apache2/conf-available/xxxxx.conf"
+              mode: '120644'
+              owner: root
+              group: root
+          commands:
+            00_setup_apache_php:
+              command: !Sub |
+                a2enmod macro rewrite unique_id remoteip
+                echo '
+                max_execution_time = 60
+                # mass deleted
+                ServerTokens ProductOnly' >> /etc/apache2/apache2.conf
+                phpenmod redis
+            01_disable_javascript-common.conf:
+              command: !Sub |
+                rm -rf /etc/apache2/conf-enabled/javascript-common.conf
+            10_disable_other_vhosts:
+              command: |
+                a2disconf other-vhosts-access-log
+        setup-modsec:
+          files:
+            '/etc/apache2/mods-available/mod-security.load':
+              content: !Sub |
+                LoadModule security2_module /usr/lib/apache2/modules/mod_security2.so
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/apache2/mods-available/mod-security.conf':
+              content: !Sub |
+                <IfModule security2_module>
+                  SecDataDir /var/cache/modsecurity
+                  Include "/etc/modsecurity/*.conf"
+                  Include "/etc/modsecurity/activated_rules/*.conf"
+                </IfModule>
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/modsec.tar.gz':
+              source: !Sub 'https://s3.amazonaws.com/${AssetsBucketName}/amibuilder-dependencies/php52/modsecurity-2.9.2.tar.gz'
+              mode: '000644'
+              owner: root
+              group: root
+              authentication: "S3AccessCreds"
+            '/tmp/owasp-modsecurity-crs.zip':
+              source: !Sub 'https://s3.amazonaws.com/${AssetsBucketName}/amibuilder-dependencies/php52/owasp-modsecurity-crs-2.2-master.zip'
+              mode: '000644'
+              owner: root
+              group: root
+              authentication: "S3AccessCreds"
+          commands:
+            00_setup_modsec:
+              command: !Sub |
+                mkdir -p /tmp/modsec
+                tar xz -C /tmp/modsec --strip-components 1 -f /tmp/modsec.tar.gz
+                # mass deleted
+                cp /opt/owasp/modsecurity_crs_10_setup.conf.example /etc/modsecurity/modsecurity_crs_10_setup.conf
+                for f in `ls /opt/owasp/base_rules/` ; do ln -s /opt/owasp/base_rules/$f /etc/modsecurity/activated_rules/$f ; done
+        setup-modsecssss:
+          files:
+            '/etc/modsecurity/ssssupload_filter_whitelist.data':
+              content: !Sub |
+                empty
+                ocument
+                image data
+                icrosoft
+                acintosh
+                Rich Text
+                PDF
+                Audio
+                Media
+                acromedia
+                Video
+                MPEG
+                Zip archive
+                RIFF
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/modsecurity/xxxxupload_filter.sh':
+              content: !Sub |
+                #!/bin/bash
+                FILE=`file "$1"`
+                # mass deleted
+              mode: '000755'
+              owner: root
+              group: root
+            '/etc/sysctl.d/60-xxxxmodsecurity.conf':
+              content: !Sub |
+                # IP Spoofing protection
+                # mass deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/modsecurity/activated_rules/modsecurity_crs_15_xxxxsetup.conf':
+              content: !Sub |
+                SecRuleEngine On
+                # mass deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/modsecurity/activated_rules/modsecurity_crs_70_xxxxexclusions.conf':
+              content: !Sub |
+                ###Global tuning
+                # mass deleted
+
+                #RAS Admin
+                <LocationMatch  /index.php/admin/>
+                  <IfModule mod_security2.c>
+                    SecRuleEngine Off
+                  </IfModule>
+                </LocationMatch>
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_modsec_bu:
+              command: !Sub |
+                sed -i 's/\}\\\[\\\]/\}/g' /etc/modsecurity/activated_rules/modsecurity_crs_41_sql_injection_attacks.conf
+                # mass deleted
+                service procps start
+        setupldap:
+          packages:
+            apt:
+              sssd: []
+              samba-common-bin: []
+              samba-libs: []
+              sssd-tools: []
+              krb5-user: []
+              adcli: []
+              realmd: []
+              chrony: []
+              ntpdate: []
+              libsss-sudo: []
+              packagekit: []
+              ldap-utils: []
+              ldapscripts: []
+          files:
+            '/etc/krb5.conf':
+              content: !Sub |
+                [libdefaults]
+                # mass deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/sssd/sssd.conf':
+              content: !Sub |
+                [sssd]
+                deleted
+              mode: '00600'
+              owner: root
+              group: root
+            '/etc/sudoers.d/domain_admins':
+              content: |
+                User_Alias ADMINS = %Admins, %WebserverAdmins
+                ADMINS ALL=(ALL) ALL
+              owner: root
+              group: root
+              mode: '00440'
+          commands:
+            00_setup_ad_login:
+              command: !Sub |
+                sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+                echo "session required pam_mkhomedir.so skel=/etc/skel/ umask=0077" | tee -a /etc/pam.d/common-session
+                chmod 700 /home/ubuntu
+                service sssd restart
+                service ssh restart
+        fix-cachefilesd:
+          files:
+            '/etc/systemd/system/cachefilesd.service':
+              content: |
+                [Unit]
+                Description=Local network file caching management daemon
+                # mass deleted
+          commands:
+            00_disable_cachefilesd:
+              command: !Sub |
+                systemctl daemon-reload
+                systemctl stop cachefilesd.service
+                systemctl disable cachefilesd.service
+        setup-unattended-upgrades:
+          files:
+            '/etc/apt/apt.conf.d/10periodic':
+              mode: '00644'
+              owner: root
+              group: root
+              content: |
+                APT::Periodic::Update-Package-Lists "1";
+                APT::Periodic::Download-Upgradeable-Packages "0";
+                APT::Periodic::AutocleanInterval "7";
+                APT::Periodic::Unattended-Upgrade "1";
+            '/etc/apt/apt.conf.d/50unattended-upgrades':
+              mode: '00644'
+              owner: root
+              group: root
+              content: |
+                // Automatically upgrade packages from these (origin:archive) pairs
+                # mass deleted
+        setup-journald:
+          files:
+            "/etc/systemd/journald.conf":
+              owner: root
+              group: root
+              mode: '000644'
+              content: |
+                [Journal]
+                # mass deleted
+        install-nodejs:
+          files:
+            '/etc/apt/sources.list.d/nodesource.list':
+              user: root
+              group: root
+              mode: '000644'
+              content: |
+                deb https://deb.nodesource.com/node_12.x focal main
+                deb-src https://deb.nodesource.com/node_12.x focal main
+            '/tmp/nodesource.key':
+              user: root
+              group: root
+              mode: '000644'
+              content: |
+                # mass deleted
+          commands:
+            00_add_apt_key:
+              command: apt-key add /tmp/nodesource.key
+            10_apt_update:
+              command: apt-get update
+            20_apt_install_nodejs:
+              command: apt-get install -y nodejs
+        install-sass:
+          packages:
+            apt:
+              nodejs: []
+          commands:
+            00_install_sass:
+              command: npm install -g sass
+
+
+  AMIBuilderRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: AMIBuilderRolePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:CreateImage'
+            - 'ec2:DeregisterImage'
+            - 'ec2:DescribeImages'
+            - 'ec2:CreateTags'
+            - 'ec2:DescribeInstances'
+            - 'ec2:TerminateInstances'
+            Resource:
+            - '*'
+          - Effect: Allow
+            Action:
+            - 'logs:*'
+            Resource:
+            - 'arn:aws:logs:*:*:*'
+
+  AMIBuilderFunction:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Ref AssetsBucketName
+        S3Key: !Sub 'amibuilder-dependencies/${AMIBuilderS3Key}'
+      Handler: !Sub '${AMIBuilderModuleName}.handler'
+      Role: !GetAtt 'AMIBuilderRole.Arn'
+      Runtime: 'nodejs12.x'
+      Timeout: 600
+
+  AMIBuilder:
+    Type: 'Custom::AMI'
+    DependsOn: WaitConditionPendingAMI
+    Properties:
+      ServiceToken: !GetAtt 'AMIBuilderFunction.Arn'
+      StackName: !Ref 'AWS::StackName'
+      Region: !Ref 'AWS::Region'
+      InstanceId: !Ref PHP80rev3Instance
+      WaitHandleAMIComplete: !Ref WaitHandleAMIComplete
+
+Outputs:
+  PHP80rev3ImageId:
+    Description: 'PHP 8.0-rev3 Image ID'
+    Value: !GetAtt 'AMIBuilder.ImageId'
+    Export:
+      Name: !Sub '${AWS::StackName}-php-80-rev3-ami'

@@ -1,0 +1,699 @@
+AWSTemplateFormatVersion: "2010-09-09"
+
+Description: "Xxxxxx Root stack"
+
+Metadata:
+  'AWS::CloudFormation::Interface':
+    ParameterGroups:
+    - Label:
+        default: 'Xxxxxx Passwords and Keys'
+      Parameters:
+      - MicrosoftADPW
+      - Prod8RDSpassword
+      # - a lot deleted
+    - Label:
+        default: 'Network and Zone names'
+      Parameters:
+      - NetworkName
+      - HostedZoneName
+      - MicrosoftADName
+    - Label:
+        default: 'AWS AMI`s for App stacks from AMI Builders stacks'
+      Parameters:
+      - PHP72ImageId
+      # - a lot deleted
+    - Label:
+        default: 'PROD80NFS: Snapshots IDs'
+      Parameters:
+      - Prod80NFSVolumeSnapshotId
+    - Label:
+        default: 'PROD80NFS: Volume UUIDs'
+      Parameters:
+      - Prod80NFSVolumeUUID 
+    - Label:
+        default: 'AWS S3 buckets'
+      Parameters:
+      - BucketName
+      - AssetsBucketName
+    - Label:
+        default: ''
+      Parameters:
+      - BucketName
+      - AssetsBucketName
+
+Parameters:
+
+  AssetsBucketName:
+    Description: "The name of the S3 bucket where files are located."
+    Type: "String"
+    Default: "xx-systemzzz"
+
+  NetworkName:
+    Description: "The name of the network that will be used to tag all resources in the VPC"
+    Type: "String"
+    Default: "xxxxxxx"
+
+  KeyName:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to hosts"
+    Type: "AWS::EC2::KeyPair::KeyName"
+    Default: "xxxxxxxxxxxx"
+
+  MicrosoftADPW:
+    NoEcho: "true"
+    Description: "MS AD Admin Password"
+    Type: "String"
+
+  ServiceADPW:
+    NoEcho: "true"
+    Description: "MS AD service user password (xxxxxxxxxxxxdap)"
+    Type: "String"
+
+  MicrosoftADName:
+    Description: "The domain name of ActiveDirectory domain in CAPITAL LETTERS."
+    Type: "String"
+    Default: 'AD.xxxxxxx.cloud'
+
+  # a lot deleted
+
+  Prod80RDSpassword:
+    NoEcho: "true"
+    Description: "The database admin account password for Production 80 RDS stack"
+    Type: "String"
+    MinLength: "8"
+    MaxLength: "32"
+    ConstraintDescription: "Must be xxxxxxx"
+
+  BucketName:
+    Description: "AWS S3 bucket name for PHP Application servers"
+    Type: "String"
+    Default: "xxxxxwww"
+
+  # other parameters
+  # a lot deleted
+
+Resources:
+
+  NetworkServices:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "xxxxxxxxx"
+      TemplateURL: !Join ["", ["https://s3.amazonaws.com/",!Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/network.services.xxxxxxxxx.yaml"]]
+      Parameters:
+        VPCAvailabilityZone1: "us-east-1c"
+        VPCAvailabilityZone2: "us-east-1d"
+        VPCAvailabilityZone3: "us-east-1a"
+        VPCAvailabilityZone4: "us-east-1b"
+        VPCAvailabilityZone5: "us-east-1e"
+        VPCAvailabilityZone6: "us-east-1f"
+        NetworkName: !Ref "NetworkName"
+        HostedZoneName: !Ref "HostedZoneName"
+
+  SecurityGroups:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn: "NetworkServices"
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "xxxx"
+      TemplateURL: !Join ["", ["https://s3.amazonaws.com/",!Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/security-groups.services.xxxxxxcml.yaml"]]
+      Parameters:
+        # a lot deleted
+        UfaIP: "x/32"
+        VPC: !GetAtt NetworkServices.Outputs.VPCId
+        VPCcidr: !GetAtt NetworkServices.Outputs.VPCcidr
+        DefaultSecurityGroup: !GetAtt NetworkServices.Outputs.DefaultSecurityGroup
+
+  ActiveDirectoryServices:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - NetworkServices
+    - SecurityGroups
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "xxxx"
+      TemplateURL: !Join ["", [ "https://", "s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/ad.services.xxxxxxcml.yaml"]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        XxxxxSubnet1: !GetAtt NetworkServices.Outputs.XxxxxSubnet1
+        XxxxxSubnet2: !GetAtt NetworkServices.Outputs.XxxxxSubnet2
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        HostedZoneName: !Ref HostedZoneName
+        MicrosoftADPW: !Ref MicrosoftADPW
+        SsoParameter: true
+        MicrosoftADAlias: true
+        MicrosoftADName: !Ref MicrosoftADName
+        NetworkName: !Ref NetworkName  
+
+  BastionServices:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - ActiveDirectoryServices
+    - NetworkServices
+    - SecurityGroups
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "xxxx"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/bastion.services.xxxxxxcml.yaml" ]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        PublicSubnet1: !GetAtt NetworkServices.Outputs.PublicSubnet1
+        XxxxxSubnet1: !GetAtt NetworkServices.Outputs.XxxxxSubnet1
+        XxxxxSubnet2: !GetAtt NetworkServices.Outputs.XxxxxSubnet2
+        XxxxxSubnet3: !GetAtt NetworkServices.Outputs.XxxxxSubnet3
+        XxxxxSubnet4: !GetAtt NetworkServices.Outputs.XxxxxSubnet4
+        XxxxxSubnet5: !GetAtt NetworkServices.Outputs.XxxxxSubnet5
+        XxxxxSubnet6: !GetAtt NetworkServices.Outputs.XxxxxSubnet6
+        HostedZoneName: !Ref HostedZoneName
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        EFSforHOMESecurityGroup: !GetAtt SecurityGroups.Outputs.EFSforHOMESecurityGroup
+        BastionSecurityGroup: !GetAtt SecurityGroups.Outputs.BastionSecurityGroup
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        ServiceADPW: !Ref ServiceADPW
+        MicrosoftADName: !Ref MicrosoftADName
+        BastionInstanceType: "t2.micro"
+        KeyName: !Ref KeyName
+        AssetsBucketName: !Ref AssetsBucketName
+        BastionTtyRecVolume: "vol-xxxxxxxxx"
+        Prod7AuroraRDS: !GetAtt Prod7RDS.Outputs.Prod7AuroraRDS
+
+  SSRedis8r:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - NetworkServices
+    - SecurityGroups
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "development"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/redis_v2.dev.xxxxxxcml.yaml"]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        XxxxxSubnet1: !GetAtt NetworkServices.Outputs.XxxxxSubnet1
+        XxxxxSubnet2: !GetAtt NetworkServices.Outputs.XxxxxSubnet2
+        XxxxxSubnet3: !GetAtt NetworkServices.Outputs.XxxxxSubnet3
+        XxxxxSubnet4: !GetAtt NetworkServices.Outputs.XxxxxSubnet4
+        XxxxxSubnet5: !GetAtt NetworkServices.Outputs.XxxxxSubnet5
+        XxxxxSubnet6: !GetAtt NetworkServices.Outputs.XxxxxSubnet6
+        RedisDevSG: !GetAtt SecurityGroups.Outputs.RedisDevSG
+        CacheNodeType: "cache.t3.micro"
+        RedisVersion: "7.0"
+        NumberOfCacheNodes: "1"
+        CacheFailover: "false"
+        CacheName: "ds8r"
+
+  Dev8rApp2:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - SSRedis8r
+    - DSNFS
+    - RRRDS
+    - RRALB
+    - Dev7Net
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "development"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/dev8r/app80.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: development
+        LongNamePrefix: 'Development-8r'
+        ShortNamePrefix: 'Dev8r'
+        InstanceType: "m5.large"
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt Dev7Net.Outputs.Dev7Subnet1
+        Subnet2: !GetAtt Dev7Net.Outputs.Dev7Subnet2
+        Subnet3: !GetAtt Dev7Net.Outputs.Dev7Subnet3
+        Subnet4: !GetAtt Dev7Net.Outputs.Dev7Subnet4
+        Subnet5: !GetAtt Dev7Net.Outputs.Dev7Subnet5
+        Subnet6: !GetAtt Dev7Net.Outputs.Dev7Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP8rv2DevSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "dev.8r"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: "xxxxnfsxxxxxxx.cloud"
+        MySQLDBEndpoint: !GetAtt RRRDS.Outputs.DSAuroraRDSEndpointAddress
+        RedisEndpoint: !GetAtt SSRedis8r.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxxx
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt XXXXB.Outputs.Dev8rTG
+        AppSpotPrice: "0.2"
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+
+  Staging8rApp:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - SSRedis8r
+    - DSNFS
+    - RRRDS
+    - RRALB
+    - Staging7Net
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "staging"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/staging8r/app80.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: staging
+        LongNamePrefix: 'Staging-8r'
+        ShortNamePrefix: 'Staging8r'
+        InstanceType: "m5.large"
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt Staging7Net.Outputs.Staging7Subnet1
+        Subnet2: !GetAtt Staging7Net.Outputs.Staging7Subnet2
+        Subnet3: !GetAtt Staging7Net.Outputs.Staging7Subnet3
+        Subnet4: !GetAtt Staging7Net.Outputs.Staging7Subnet4
+        Subnet5: !GetAtt Staging7Net.Outputs.Staging7Subnet5
+        Subnet6: !GetAtt Staging7Net.Outputs.Staging7Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP8rStagingSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "staging.8r"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: "xxxxnfsxxxxxxx.cloud"
+        MySQLDBEndpoint: !GetAtt RRRDS.Outputs.DSAuroraRDSEndpointAddress
+        RedisEndpoint: !GetAtt SSRedis8r.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxx
+        AppMinInstances: 1
+        AppMaxInstances: 1
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt XXXXB.Outputs.Staging8rTG
+        AppSpotPrice: "0.2"
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+
+
+  Prod80NFS:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - ActiveDirectoryServices
+    - NetworkServices
+    - SecurityGroups
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "production"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/nfs80.prod.xxxxxxcml.yaml"]]
+      Parameters:
+        Prod80NFSServicesInstanceType: "m5.xlarge"
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Prod80NFSVolumeSnapshotId: !Ref Prod80NFSVolumeSnapshotId
+        Prod80NFSVolumeUUID: !Ref Prod80NFSVolumeUUID
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        Prod80Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Prod80Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        Prod80NFSServicesSecurityGroup: !GetAtt SecurityGroups.Outputs.Prod80NFSServicesSecurityGroup
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        ServiceADPW: !Ref ServiceADPW
+        MicrosoftADName: !Ref MicrosoftADName
+        OperatorEMail: "xxxx@xxxx.com"
+        DDNSS3Key: "ddns.zip"
+        Prod80NFSServicesDNSEntry: "prod80-nfs.xxxxxxx.cloud"
+        KeyName: !Ref KeyName
+
+  Prod8rALB:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod8r/alb8r.xxxxxxcml.yaml" ]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        PublicSubnet1: !GetAtt NetworkServices.Outputs.PublicSubnet1
+        PublicSubnet2: !GetAtt NetworkServices.Outputs.PublicSubnet2
+        PublicSubnet3: !GetAtt NetworkServices.Outputs.PublicSubnet3
+        PublicSubnet4: !GetAtt NetworkServices.Outputs.PublicSubnet4
+        PublicSubnet5: !GetAtt NetworkServices.Outputs.PublicSubnet5
+        PublicSubnet6: !GetAtt NetworkServices.Outputs.PublicSubnet6
+        ALBName: xxxx-prod-8r
+        TGName: Production-8r
+        ALBSG: !GetAtt SecurityGroups.Outputs.PHP8rProductionELBSG
+        OperatorEMail: "xxxx@xxxx.com"
+        ALBCert: xxxxx
+
+  Prod8rRedis:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - NetworkServices
+    - SecurityGroups
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "production"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/redis8r_v2.prod.xxxxxxcml.yaml"]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        Prod8rSubnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Prod8rSubnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        Prod8rRedisSG: !GetAtt SecurityGroups.Outputs.Prod8rRedisSG
+        CacheNodeType: "cache.t3.medium"
+        RedisVersion: "7.0"
+        NumberOfCacheNodes: "2"
+        CacheFailover: "true"
+        CacheName: "production-8r"
+
+  Prod8rRDS:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 60
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod8r/rds8r.xxxxxxcml.yaml" ]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.Prod8rRDSSecurityGroup
+        BackupRetention: "7"
+        MasterUserPassword: !Ref Prod8rRDSpassword
+        MasterUsername: xxxx
+        InstanceClass: db.t3.small
+        OperatorEMail: xxxx@xxxx.com
+        Enabled: Enabled
+
+
+  Prod8rApp:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - Prod8rALB
+      - Prod8rRedis
+      - Prod80NFS
+      - Prod8rRDS
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: "Environment"
+          Value: "production"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod8r/app8r.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: production
+        LongNamePrefix: Production-8r
+        ShortNamePrefix: Prod8r
+        InstanceType: c5.xlarge
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        Subnet3: !GetAtt NetworkServices.Outputs.Prod80Subnet3
+        Subnet4: !GetAtt NetworkServices.Outputs.Prod80Subnet4
+        Subnet5: !GetAtt NetworkServices.Outputs.Prod80Subnet5
+        Subnet6: !GetAtt NetworkServices.Outputs.Prod80Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP8rProductionSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "prod.8r"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: !GetAtt Prod80NFS.Outputs.Prod80NFSServicesDNSEntry
+        MySQLDBEndpoint: !GetAtt Prod8rRDS.Outputs.AuroraEndpoint
+        RedisEndpoint: !GetAtt Prod8rRedis.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxxx
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt Prod8rALB.Outputs.TG
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+        AppMinInstances: 2
+        AppMaxInstances: 40
+        AppSpotPrice: 0.5
+
+  Prod80ALB:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod80/alb.xxxxxxcml.yaml" ]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        PublicSubnet1: !GetAtt NetworkServices.Outputs.PublicSubnet1
+        PublicSubnet2: !GetAtt NetworkServices.Outputs.PublicSubnet2
+        PublicSubnet3: !GetAtt NetworkServices.Outputs.PublicSubnet3
+        PublicSubnet4: !GetAtt NetworkServices.Outputs.PublicSubnet4
+        PublicSubnet5: !GetAtt NetworkServices.Outputs.PublicSubnet5
+        PublicSubnet6: !GetAtt NetworkServices.Outputs.PublicSubnet6
+        ALBName: xxxx-prod-80
+        TGName: Production-80
+        ALBSG: !GetAtt SecurityGroups.Outputs.PHP80ProductionELBSG
+        OperatorEMail: "xxxx@xxxx.com"
+        ALBCert: xxxx
+
+  Prod80App:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - Prod80ALB
+      - Prod80Redis
+      - Prod80NFS
+      - Prod80RDS
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: "Environment"
+          Value: "production"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod80/app80.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: production
+        LongNamePrefix: Production-80
+        ShortNamePrefix: Prod80
+        InstanceType: c5.xlarge
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        Subnet3: !GetAtt NetworkServices.Outputs.Prod80Subnet3
+        Subnet4: !GetAtt NetworkServices.Outputs.Prod80Subnet4
+        Subnet5: !GetAtt NetworkServices.Outputs.Prod80Subnet5
+        Subnet6: !GetAtt NetworkServices.Outputs.Prod80Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP80ProductionSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "prod.80"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: !GetAtt Prod80NFS.Outputs.Prod80NFSServicesDNSEntry
+        MySQLDBEndpoint: !GetAtt Prod80RDS.Outputs.AuroraEndpoint
+        RedisEndpoint: !GetAtt Prod80Redis.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxxx
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt Prod80ALB.Outputs.TG
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+        AppMinInstances: 2
+        AppMaxInstances: 40
+        AppSpotPrice: 0.5
+
+  Prod80RDS:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 60
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod80/rds.xxxxxxcml.yaml" ]]
+      Parameters:
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+        Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.Prod80RDSSecurityGroup
+        BackupRetention: "7"
+        MasterUserPassword: !Ref Prod80RDSpassword
+        MasterUsername: xxxx
+        InstanceClass: db.t3.small
+        OperatorEMail: xxxx@xxxx.com
+        Enabled: Enabled
+
+  Prod80Redis:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 60
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/prod80/redis_v2.xxxxxxcml.yaml" ]]
+      Parameters:
+        CacheName: production-80
+        CacheNodeType: cache.m5.large
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.Prod80RedisSG
+        Subnet1: !GetAtt NetworkServices.Outputs.Prod80Subnet1
+        Subnet2: !GetAtt NetworkServices.Outputs.Prod80Subnet2
+        VPCId: !GetAtt NetworkServices.Outputs.VPCId
+
+  IAMRoles:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 15
+      Tags:
+        - Key: Environment
+          Value: xxxx
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/iam.services.xxxxxxcml.yaml" ]]
+
+  S3:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TimeoutInMinutes: 30
+      Tags:
+        - Key: Environment
+          Value: xxxx
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/s3.services.xxxxxxcml.yaml" ]]
+
+  Services:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+    - Prod52App
+    - Prod56App
+    - Prod7App
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+      - Key: "Environment"
+        Value: "xxxx"
+      - Key: "Other"
+        Value: "infov1"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/services/xxxservices.xxxxxxcml.yaml" ]]
+      Parameters:
+        AssetsBucketName: !Ref "AssetsBucketName"
+        PublicSubnet1: !GetAtt NetworkServices.Outputs.PublicSubnet1
+        ServicesxxxxxHostSG: !GetAtt SecurityGroups.Outputs.ServicesxxxxxHostSG
+        RelayMailHostSG: !GetAtt SecurityGroups.Outputs.RelayMailHostSG
+        ApexHostSG: !GetAtt SecurityGroups.Outputs.ApexHostSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        FTPHostSG:  !GetAtt SecurityGroups.Outputs.FTPHostSG
+        K6HostSG:  !GetAtt SecurityGroups.Outputs.K6HostSG
+        EFSforHOMEid: !GetAtt BastionServices.Outputs.EFSforHOMEid
+        ServiceADPW: !Ref ServiceADPW
+        MicrosoftADName: !Ref MicrosoftADName
+        SvnPass: !Ref SvnPass
+        SvnUser: "svn"
+        KeyName: !Ref KeyName
+        OperatorEMail: "xxxx@xxxx.com"
+        DSNFSStack: !Select [1, !Split ["/", !Ref DSNFS]]
+        Prod52NFSStack: !Select [1, !Split ["/", !Ref Prod52NFS]]
+        Prod56NFSStack: !Select [1, !Split ["/", !Ref Prod56NFS]]
+        Prod7NFSStack: !Select [1, !Split ["/", !Ref Prod7NFS]]
+        ServicesInstanceType: t2.medium
+        ServicesSvnVolumeSnapshotId: snap-xxxx
+        SericesSvnVolumeUUID: "xxxxx"
+        ServicesEIPid: eipalloc-xxxx
+        ApexHostInstanceType: t2.nano
+        ApexEIPid: "eipalloc-xxxx
+        MailerDomain: "xxxx.com"
+        RelayMailHostInstanceType: t3.micro
+        RelayUserPassword: !Ref RelayUserPassword
+        RelayMailHost2hostname: "relay222.xxxx.net"
+        RelayMailHost2EIPid: eipalloc-xxxx
+        RelayMailHost9hostname: "relay119.xxxx.net"
+        RelayMailHost9EIPid: eipalloc-xxxxx
+        xxxxMailHostInstanceType: t2.medium
+        xxxxMailHostEIPid: eipalloc-xxxxx
+        xxxxMailVolumeSnapshotId: snap-xxx
+        FTPHostInstanceType: t2.nano
+        FTPHostVolumeSnapshotId: snap-xxxxx
+        FTPHostVolumeUUID: "xxxxx"
+        FTPHostEIPid: eipalloc-xxxxx
+        FTPHostIpAddressExternal: "xxxxxx"
+        TouchnetHostEIPid: eipalloc-xxxx
+        TouchnetHostSG: !GetAtt SecurityGroups.Outputs.TouchnetHostSG
+        TouchnetHostInstanceType: t2.nano
+
+  Dev80App:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - SSRedis
+      - DSNFS
+      - RRRDS
+      - RRALB
+      - Dev7Net
+      - IAMRoles
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: "Environment"
+          Value: "development"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/dev80/app80.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: development
+        LongNamePrefix: 'Development-80'
+        ShortNamePrefix: 'Dev80'
+        InstanceType: "m5.large"
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt Dev7Net.Outputs.Dev7Subnet1
+        Subnet2: !GetAtt Dev7Net.Outputs.Dev7Subnet2
+        Subnet3: !GetAtt Dev7Net.Outputs.Dev7Subnet3
+        Subnet4: !GetAtt Dev7Net.Outputs.Dev7Subnet4
+        Subnet5: !GetAtt Dev7Net.Outputs.Dev7Subnet5
+        Subnet6: !GetAtt Dev7Net.Outputs.Dev7Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP80DevSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "dev.80"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: "xxxxnfsxxxxxxx.cloud"
+        MySQLDBEndpoint: !GetAtt RRRDS.Outputs.DSAuroraRDSEndpointAddress
+        RedisEndpoint: !GetAtt SSRedis.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxxx
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt XXXXB.Outputs.Dev80TG
+        AppSpotPrice: "0.2"
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+        AppMinInstances: 2
+        AppMaxInstances: 3
+
+  Staging80App:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - SSRedis
+      - DSNFS
+      - RRRDS
+      - RRALB
+      - Staging7Net
+      - IAMRoles
+    Properties:
+      TimeoutInMinutes: 60
+      Tags:
+        - Key: "Environment"
+          Value: "staging"
+      TemplateURL: !Join ["", [ "https://s3.amazonaws.com/", !Ref "AssetsBucketName", "/cf-tmpls/smthpath/staging80/app80.xxxxxxcml.yaml" ]]
+      Parameters:
+        EnvironmentTier: staging
+        LongNamePrefix: 'Staging-80'
+        ShortNamePrefix: 'Staging80'
+        InstanceType: "m5.large"
+        AssetsBucketName: !Ref "AssetsBucketName"
+        BucketName: !Ref "BucketName"
+        Subnet1: !GetAtt Staging7Net.Outputs.Staging7Subnet1
+        Subnet2: !GetAtt Staging7Net.Outputs.Staging7Subnet2
+        Subnet3: !GetAtt Staging7Net.Outputs.Staging7Subnet3
+        Subnet4: !GetAtt Staging7Net.Outputs.Staging7Subnet4
+        Subnet5: !GetAtt Staging7Net.Outputs.Staging7Subnet5
+        Subnet6: !GetAtt Staging7Net.Outputs.Staging7Subnet6
+        AppSG: !GetAtt SecurityGroups.Outputs.PHP80StagingSG
+        MailOutSGid: !GetAtt SecurityGroups.Outputs.MailOutSGid
+        MiscOutputSecurityGroup: !GetAtt SecurityGroups.Outputs.MiscOutputSecurityGroup
+        ZonePrefix: "staging.80"
+        OperatorEMail: "xxxx@xxxx.com"
+        Route53HostedZoneID: !GetAtt NetworkServices.Outputs.Route53HostedZoneID
+        NFSDNSEndpoint: "xxxxnfsxxxxxxx.cloud"
+        MySQLDBEndpoint: !GetAtt RRRDS.Outputs.DSAuroraRDSEndpointAddress
+        RedisEndpoint: !GetAtt SSRedis.Outputs.RedisEndpointAddress
+        AppImageId: ami-xxxxx
+        KeyName: !Ref KeyName
+        AppTG: !GetAtt XXXXB.Outputs.Staging80TG
+        AppSpotPrice: "0.2"
+        AppCacheVolumeSnapshot: !Ref AppCacheVolumeSnapshot
+        WazuhAuthdPass: !Ref WazuhAuthdPass
+        AppWWWVolumeUUID: "xxxxxx"
+        AppMinInstances: 0
+        AppMaxInstances: 2

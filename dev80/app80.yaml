@@ -1,0 +1,909 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Xxxxxx PHP-8.0 App stack'
+Parameters:
+  KeyName:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access"
+    Type: "AWS::EC2::KeyPair::KeyName"
+  InstanceType:
+    Description: 'PHP 8.0 EC2 instance type'
+    Type: String
+    Default: 'm5a.large'
+    AllowedValues:
+      - t2.nano
+      - t2.micro
+      - t2.medium
+      - m4.large
+      - m5.large
+      - m5a.large
+      - c5.xlarge
+    ConstraintDescription: 'must be a valid EC2 instance type.'
+  OperatorEMail:
+    Description: 'EMail address to notify if there are any scaling operations'
+    Type: String
+    AllowedPattern: "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)"
+    ConstraintDescription: 'must be a valid email address.'
+  AppImageId:
+    Description: 'PHP-8.0 Custom AMI ID from AMI Builder'
+    Type: String
+  BucketName:
+    Description: 'AWS S3 bucket name for Xxxxxx apps'
+    Type: String
+    Default: 'xxxxxwww'
+  Subnet1:
+    Description: 'Private VPC subnet ID in AZ1'
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet2:
+    Description: 'Private VPC subnet ID in AZ2'
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet3:
+    Description: 'Private VPC subnet ID in AZ3'
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet4:
+    Description: 'Private VPC subnet ID in AZ4'
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet5:
+    Description: 'Private VPC subnet ID in AZ5'
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet6:
+    Description: 'Private VPC subnet ID in AZ6'
+    Type: "AWS::EC2::Subnet::Id"
+  AssetsBucketName:
+    Description: 'The name of the S3 bucket where files are located.'
+    Type: String
+    Default: 'xx-systemzzz'
+  NFSDNSEndpoint:
+    Description: 'The connection endpoint for NFS'
+    Type: String
+  MySQLDBEndpoint:
+    Description: 'The connection endpoint for MySQL'
+    Type: String
+  RedisEndpoint:
+    Description: 'The connection endpoint for Redis'
+    Type: String
+  Route53HostedZoneID:
+    Description: "Route53 Hosted Zone ID"
+    Type: String
+  HostedZoneName:
+    Description: "The domain name of the hosted zone managed by AWS Route53."
+    Type: String
+    Default: "xxxxxxx.cloud"
+  ZonePrefix:
+    Description: "The prefix for zones managed by AWS Route53."
+    Type: String
+  MailOutSGid:
+    Description: "ID of Xxxxxx Main Outbound to Mail Relay servers security group"
+    Type: String
+  MiscOutputSecurityGroup:
+    Description: "Miscellaneous Output Security group for application servers"
+    Type: String
+  AppSG:
+    Description: "PHP-8.0 app servers security group"
+    Type: String
+  AppTG:
+    Description: 'Xxxxxx PHP-8.0 Target Group ARN'
+    Type: "String"
+  AppSpotPrice:
+    Description: 'Xxxxxx PHP-8.0 App Spot Price'
+    Type: String
+    Default: "OnDemand"
+  AppMinInstances:
+    Description: 'Minimum number of App instances'
+    Type: Number
+    Default: 1
+  AppMaxInstances:
+    Description: 'Maximum number of App instances'
+    Type: Number
+    Default: 2
+  AppCacheVolumeSnapshot:
+    Description: 'App Cache Volume Snapshot ID'
+    Type: String
+  AppWWWVolumeUUID:
+    Description: 'App WWW Volume UUID'
+    Type: String
+  PushSnapshotAPIKey:
+    Description: 'API Key for xxx'
+    Type: String
+    Default: xxx
+  WazuhAuthdPass:
+    Description: "Wazuh shared password authentication"
+    NoEcho: "true"
+    Type: String
+  LongNamePrefix:
+    Description: 'String used to prefix names'
+    Type: String
+  ShortNamePrefix:
+    Description: 'Short form of string used to prefix names'
+    Type: String
+  EnvironmentTier:
+    Description: 'Choice of development, staging, or production'
+    Type: String
+    AllowedValues: [development, staging, production, test]
+
+Conditions:
+  IsDevelopment: !Equals [!Ref EnvironmentTier, development]
+  UseSpotInstances: !Not [!Equals [!Ref AppSpotPrice, OnDemand]]
+
+Resources:
+  RedisDNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneID
+      Comment: 'CNAME Record for PHP-8.0 App to connection endpoint for ElastiCache Redis'
+      Name: !Sub '${ZonePrefix}.cache.${HostedZoneName}.'
+      Type: "CNAME"
+      TTL: 300
+      ResourceRecords:
+      - !Ref RedisEndpoint
+  DBDNSRecord:
+    Type: "AWS::Route53::RecordSet"
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneID
+      Comment: "CNAME Record for PHP-8.0 App to connection endpoint for RDS MySQL database"
+      Name: !Sub '${ZonePrefix}.db.${HostedZoneName}.'
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+      - !Ref MySQLDBEndpoint
+  NFSDNSRecord:
+    Type: "AWS::Route53::RecordSet"
+    Properties:
+      HostedZoneId: !Ref Route53HostedZoneID
+      Comment: "CNAME Record for PHP-8.0 App to connection endpoint for NFS server"
+      Name: !Sub '${ZonePrefix}.nfs.${HostedZoneName}.'
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+      - !Ref NFSDNSEndpoint
+  SNSTopic:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+        - Endpoint: !Ref OperatorEMail
+          Protocol: email
+  SysLogGroup:
+    DeletionPolicy: Retain
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LongNamePrefix}-App-Syslog'
+  ApacheErrorLogGroup:
+    DeletionPolicy: Retain
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LongNamePrefix}-App-ApacheError'
+  ApacheAccessLogGroup:
+    DeletionPolicy: Retain
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      LogGroupName: !Sub '${LongNamePrefix}-App-ApacheAccess'
+  AppIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - 'ec2.amazonaws.com'
+            Action:
+              - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+        - PolicyName: !Sub "${ShortNamePrefix}AppPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ssm:DescribeAssociation'
+                  - 'ssm:GetDeployablePatchSnapshotForInstance'
+                  - 'ssm:GetDocument'
+                  - 'ssm:GetParameters'
+                  - 'ssm:ListAssociations'
+                  - 'ssm:ListCommands'
+                  - 'ssm:ListInstanceAssociations'
+                  - 'ssm:PutInventory'
+                  - 'ssm:UpdateAssociationStatus'
+                  - 'ssm:UpdateInstanceAssociationStatus'
+                  - 'ssm:UpdateInstanceInformation'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ssm:SendCommand'
+                Resource:
+                  - "arn:aws:ssm:us-east-1:xxxx1111xxxx:document/xxxRunJestTests"
+                  - "arn:aws:ssm:us-east-1:xxxx1111xxxx:document/xxxRunJestTests-dev"
+                  - "arn:aws:ssm:us-east-1:xxxx1111xxxx:document/xxxRunPuppeteer"
+                  - "arn:aws:ssm:us-east-1:xxxx1111xxxx:document/xxxRunPuppeteer-dev"
+              - Effect: Allow
+                Action:
+                  - 'ssm:SendCommand'
+                Resource: 'arn:aws:ec2:us-east-1:xxxx1111xxxx:instance/*'
+                Condition:
+                  StringLike:
+                    "ssm:resourceTag/aws:cloudformation:logical-id": "ServicesHost"
+              - Effect: Allow
+                Action:
+                  - 'ec2messages:AcknowledgeMessage'
+                  - 'ec2messages:DeleteMessage'
+                  - 'ec2messages:FailMessage'
+                  - 'ec2messages:GetEndpoint'
+                  - 'ec2messages:GetMessages'
+                  - 'ec2messages:SendReply'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'cloudwatch:PutMetricData'
+                  - 'ec2:DescribeTags'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'ec2:DescribeInstanceStatus'
+                  - 'ec2:CreateVolume'
+                  - 'ec2:DescribeVolumes'
+                  - 'ec2:AttachVolume'
+                  - 'ec2:ModifyVolume'
+                  - 'ec2:ModifyInstanceAttribute'
+                  - 'elasticloadbalancing:DescribeTargetHealth'
+                  - 'elasticloadbalancing:RegisterTargets'
+                  - 'autoscaling:DescribeAutoScalingInstances'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                  - 's3:GetObject'
+                  - 's3:AbortMultipartUpload'
+                  - 's3:ListMultipartUploadParts'
+                  - 's3:ListBucketMultipartUploads'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${AssetsBucketName}/logs/ssm/*'
+              - Effect: Allow
+                Action:
+                  - 's3:getObject'
+                Resource: !Sub 'arn:aws:s3:::${AssetsBucketName}/pushes/*'
+              - Effect: Allow
+                Action:
+                  - 's3:Get*'
+                  - 's3:Put*'
+                  - 's3:List*'
+                  - 's3:Abort*'
+                  - 's3:DeleteObject*'
+                Resource:
+                  - 'arn:aws:s3:::xx-systemzzz-home-folders'
+                  - 'arn:aws:s3:::xx-systemzzz-home-folders/*'
+              - Effect: Allow
+                Action:
+                  - 's3:Get*'
+                  - 's3:Put*'
+                  - 's3:List*'
+                  - 's3:Abort*'
+                Resource:
+                  - !Sub 'arn:aws:s3:::${BucketName}/*'
+                  - !Sub 'arn:aws:s3:::${BucketName}'
+                  - 'arn:aws:s3:::xxxx/*'
+                  # mass deleted
+              - Effect: Allow
+                Action:
+                  - 'ses:SendEmail'
+                  - 'ses:VerifyEmailIdentity'
+                Resource: '*'
+              - Effect: 'Allow'
+                Action:
+                  - 'kms:GenerateDataKey'
+                  - 'kms:Decrypt'
+                  - 'kms:Encrypt'
+                Resource: '*'
+              - Effect: 'Allow'
+                Action:
+                  - 'cloudsearch:*'
+                Resource: '*'
+              - Effect: 'Allow'
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:CreateLogGroup'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogStreams'
+                Resource:
+                  - !GetAtt 'SysLogGroup.Arn'
+                  - !GetAtt 'ApacheErrorLogGroup.Arn'
+                  - !GetAtt 'ApacheAccessLogGroup.Arn'
+                  - "arn:aws:logs:us-east-1:xxxx1111xxxx:log-group:/bu/*"
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                Resource:
+                  - 'arn:aws:dynamodb:us-east-1:xxxx1111xxxx:table/connectLog'
+              - Effect: Allow
+                Action:
+                  - 'sns:*'
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'sqs:CreateQueue'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:GetQueueUrl'
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:SendMessage'
+                Resource: 'arn:aws:sqs:us-east-1:xxxx1111xxxx:d_*'
+              - Effect: Allow
+                Action:
+                  - 'sqs:CreateQueue'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:DeleteQueue'
+                  - 'sqs:GetQueueAttributes'
+                  - 'sqs:GetQueueUrl'
+                  - 'sqs:ListQueues'
+                  - 'sqs:ListQueueTags'
+                  - 'sqs:PurgeQueue'
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:SendMessage'
+                  - 'sqs:SetQueueAttributes'
+                  - 'sqs:TagQueue'
+                  - 'sqs:UntagQueue'
+                Resource: 'arn:aws:sqs:us-east-1:xxxx1111xxxx:d_mailchecker*'
+              - Effect: Allow
+                Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource: 'arn:aws:secretsmanager:us-east-1:xxxx1111xxxx:secret:ConnectMailApiSecret-??????'
+              - Effect: Allow
+                Action:
+                  - 'execute-api:ManageConnections'
+                Resource: 'arn:aws:execute-api:us-east-1:xxxx1111xxxx:*/*'
+              - Effect: Allow
+                Action:
+                  - 'lambda:InvokeFunction'
+                Resource: 'arn:aws:lambda:us-east-1:xxxx1111xxxx:function:LiveChat*'
+        - PolicyName: !Sub "${ShortNamePrefix}lnhubPolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: Athena
+                Effect: Allow
+                Action:
+                  - athena:StartQueryExecution
+                  - athent:GetQueryResultsStream
+                  - athena:GetQueryExecution
+                  - athena:GetQueryResults
+                Resource: arn:aws:athena:*:xxxx1111xxxx:workgroup/livenation-lnhub
+              - Sid: Glue
+                Effect: Allow
+                Action: glue:GetTable
+                Resource: "*"
+              - Sid: S3
+                Effect: Allow
+                Action:
+                  - s3:Abort*
+                  - s3:Get*
+                  - s3:List*
+                  - s3:Put*
+                Resource:
+                  - arn:aws:s3:::livenation-lnhub
+                  - arn:aws:s3:::livenation-lnhub/*
+        - PolicyName: !Sub "${ShortNamePrefix}TranslatePolicy"
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: S3
+                Effect: Allow
+                Action:
+                  - s3:Abort*
+                  - s3:Get*
+                  - s3:List*
+                  - s3:Put*
+                Resource:
+                  - arn:aws:s3:::Xxxxxx-translate
+                  - arn:aws:s3:::Xxxxxx-translate/*
+              - Sid: PassRole
+                Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:PassRole
+                Resource: !ImportValue MainTranslationIAMRole
+              - Sid: Translate
+                Effect: Allow
+                Action:
+                  - 'translate:TranslateText'
+                  - 'translate:DescribeTextTranslationJob'
+                  - 'translate:ListTextTranslationJob'
+                  - 'translate:StartTextTranslationJob'
+                  - 'translate:StopTextTranslationJob'
+                Resource: "*"
+
+  AppInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: '/'
+      Roles:
+        - !Ref AppIAMRole
+
+  AppLT:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub '${LongNamePrefix}-LaunchTemplate'
+      LaunchTemplateData:
+        BlockDeviceMappings:
+          - DeviceName: '/dev/xvdc'
+            Ebs:
+              DeleteOnTermination: true
+              SnapshotId: !Ref AppCacheVolumeSnapshot
+              VolumeType: gp2
+        IamInstanceProfile:
+          Name: !Ref AppInstanceProfile
+        ImageId: !Ref AppImageId
+        InstanceInitiatedShutdownBehavior: terminate
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        SecurityGroupIds:
+          - !Ref AppSG
+          - !Ref MailOutSGid
+          - !Ref MiscOutputSecurityGroup
+        UserData:
+          'Fn::Base64': !Sub |
+            #!/bin/bash -xe
+            # mass deleted
+            cfn-init -v --stack ${AWS::StackName} --resource AppLT --configsets SetupConfigSet --region ${AWS::Region}
+            [ -e /var/local/www-warmed ] || /usr/sbin/prewarm-www ${AppWWWVolumeUUID} immediate
+            cfn-signal --exit-code=$? --stack ${AWS::StackName} --resource AppASG --region ${AWS::Region}
+    Metadata:
+      Comment: 'PHP-8.0 AutoScaling LaunchTemplate'
+      'AWS::CloudFormation::Init':
+        configSets:
+          SetupConfigSet:
+            - cfn-config
+            - enable-caches
+            - nfs-config
+            - users-config
+            - setup-amazon-cloudwatch-agent
+            # mass deleted
+          UpdateConfigSet:
+            - low-disk-alert
+            - set-environment-variables
+          EnableCachesConfigSet:
+            - enable-caches
+        set-environment-variables:
+          commands:
+            00_set-environment-variables:
+              test: !Sub |
+                if grep -q INFRA /etc/environment; then exit 1; else exit 0; fi
+              command: !Sub |
+                echo "
+                export INFRA=2
+                export INFRA_TIER=${EnvironmentTier}
+                " >> /etc/environment
+            01_set-environment-variables:
+              test: !Sub |
+                if grep -q /etc/environment /etc/apache2/envvars; then exit 1; else exit 0; fi
+              command: !Sub |
+                echo "
+                . /etc/environment
+                " >> /etc/apache2/envvars
+        enable-caches:
+          files:
+            '/etc/sysctl.d/60-xxcache.conf':
+              content: |
+                vm.swappiness=1
+                vm.vfs_cache_pressure=1
+            '/etc/php/8.0/apache2/conf.d/10-opcache.ini':
+              content: |
+                zend_extension=opcache.so
+                # mass deleted
+            '/etc/cachefilesd.conf':
+              content: |
+                dir /opt/cache/fscache
+                # mass deleted
+            '/etc/default/cachefilesd':
+              content: |
+                RUN=yes
+                DAEMON_OPTS=""
+            '/etc/systemd/system/varnish.service':
+              content: |
+                [Unit]
+                Description=Varnish HTTP accelerator
+                # mass deleted
+            '/etc/varnish/default.vcl':
+              content: |
+                vcl 4.0;
+
+                import std;
+                # mass deleted
+          commands:
+            00_cache_mount:
+              command: !Sub |
+                mkdir -p /opt/cache
+                echo "UUID=xxxxxx /opt/cache ext4 defaults,barrier=0,noatime 0 0" >> /etc/fstab
+                mount /opt/cache
+            01_restart_services:
+              command: !Sub |
+                sysctl -p
+                service procps restart
+                systemctl daemon-reload
+                service varnish restart
+                service cachefilesd stop
+                killall cachefilesd
+                service cachefilesd start
+        setupntp:
+          files:
+            '/etc/chrony/chrony.conf':
+              content: !Sub |
+                server ad.xxxxxxx.cloud prefer iburst
+                # mass deleted
+                rtconutc
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_ntp:
+              command: !Sub |
+                service chrony stop
+                ntpdate ad.xxxxxxx.cloud
+                service chrony start
+          services:
+            sysvinit:
+              chrony:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - '/etc/chrony/chrony.conf'
+        low-disk-alert:
+          files:
+            '/etc/cron.hourly/low-disk-alert':
+              content: |
+                #!/bin/bash
+                # mass deleted
+                echo -e "$mail" | /usr/sbin/sendmail "$recipients"
+                fi
+              mode: '000755'
+              owner: root
+              group: root
+        php-xdebug:
+          commands:
+            10_enable:
+              command: phpenmod xdebug
+        setup-amazon-cloudwatch-agent:
+          files:
+            '/etc/systemd/system/amazon-cloudwatch-agent.service.d/override.conf':
+              user: root
+              group: root
+              mode: '000640'
+              content: |
+                [Service]
+                LimitNOFILE=8192
+          commands:
+            00_create_logs_dir:
+              command: |
+                INSTANCE_ID=`curl http://169.254.169.254/latest/meta-data/instance-id`
+                NFS_CW_SITES=/mnt/nfs/_common/logs/cloudwatch-sites/$INSTANCE_ID
+                mkdir -p $NFS_CW_SITES
+                chmod 777 $NFS_CW_SITES
+                ln -s $NFS_CW_SITES /var/log/cloudwatch-sites
+            01_setup-amazon-cloudwatch-agent:
+              command: !Sub |
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/mnt/nfs/_common/logs/amazon-cloudwatch-agent.json -s
+                systemctl daemon-reload
+                systemctl enable amazon-cloudwatch-agent
+                service amazon-cloudwatch-agent restart
+            02_workaround-with-issue:
+              command: !Sub |
+                uname_date=`uname -v`
+                sed -i "/$uname_date/d" /var/log/syslog
+                service amazon-cloudwatch-agent restart
+                service rsyslog restart
+            03_delete_logrotate_cloudwatch-sites:
+              command: !Sub |
+                rm -rf /etc/logrotate.d/cloudwatch-sites
+        cfn-config:
+          files:
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.AppLT.Metadata.AWS::CloudFormation::Init
+                action=cfn-init --verbose --stack=${AWS::StackName} --region=${AWS::Region} --resource=AppLT --configsets UpdateConfigSet
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - '/etc/cfn/cfn-hup.conf'
+                  - '/etc/cfn/hooks.d/cfn-auto-reloader.conf'
+        nfs-config:
+          commands:
+            00_nfs_mount:
+              command: !Sub |
+                mkdir -p /mnt/nfs
+                mount -t nfs4 -o nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576 $(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/${EnvironmentTier}/php80/nfs /mnt/nfs
+                echo "$(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/${EnvironmentTier}/php80/nfs /mnt/nfs nfs4 nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576,fsc 0 0" >> /etc/fstab
+            01_www_shared_mount:
+              command: !Sub |
+                mkdir -p /mnt/www-shared
+                mount -t nfs4 -o nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576 $(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/${EnvironmentTier}/php80/www /mnt/www-shared
+                echo "$(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/${EnvironmentTier}/php80/www /mnt/www-shared nfs4 nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576,fsc 0 0" >> /etc/fstab
+            02_cores_mount:
+              command: !Sub |
+                mkdir -p /mnt/nfs/_cores
+                mount -t nfs4 -o nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576 $(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/_cores /mnt/nfs/_cores
+                echo "$(gethostip -d ${NFSDNSEndpoint}):/mnt/nfs/_cores /mnt/nfs/_cores nfs4 nfsvers=4.1,noacl,noatime,nodiratime,rsize=1048576,wsize=1048576,fsc 0 0" >> /etc/fstab
+        users-config:
+          commands:
+            00_add_users:
+              command: !Sub |
+                /mnt/nfs/create_user_groups.sh
+                ln -sf /mnt/nfs/xxxxxx-common.vhost /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                cp /mnt/nfs/xxx-srv-app-server-local-www.vhost /etc/apache2/sites-enabled/xxx-srv-app-server-local-www.vhost
+        domain-developers:
+          files:
+            "/etc/sudoers.d/domain_developers":
+              content: "%Developers ALL=(ALL) ALL"
+              owner: root
+              group: root
+              mode: '00440'
+          commands:
+            00_add_users:
+              command: !Sub |
+                sed -i 's/simple_allow_groups = Admins/simple_allow_groups = Admins, Developers/g' /etc/sssd/sssd.conf
+                service sssd restart
+        php-redis-conf:
+          commands:
+            00_add_redis_conf_to_php:
+              command: !Sub |
+                sed -i '/session.save_handler = files/d' /etc/php/8.0/apache2/php.ini
+                echo '
+                session.save_handler = redis
+                # mass deleted
+                session.hash_bits_per_character = 5
+                ' >> /etc/php/8.0/apache2/php.ini
+        enable-opcaches-php80:
+          files:
+            '/etc/php/8.0/apache2/conf.d/10-opcache.ini':
+              content: |
+                zend_extension=opcache.so
+                # mass deleted
+        php80-redis-conf:
+          commands:
+            00_add_redis_conf_to_php:
+              command: !Sub |
+                sed -i '/session.save_handler = files/d' /etc/php/8.0/apache2/php.ini
+                echo '
+                session.save_handler = redis
+                # mass deleted
+                session.hash_bits_per_character = 5
+                ' >> /etc/php/8.0/apache2/php.ini
+        fix-opcache:
+          commands:
+            00_fix_opcache:
+              command: |
+                rm -Rf /opt/cache/opcache/*
+                chmod 777 /opt/cache/opcache
+                curl -v http://localhost:8080/elbhealthcheck.php
+                chmod -R 777 /opt/cache/opcache
+        install-php-ds:
+          commands:
+            00_install-php-ds:
+              command: !Sub |
+                apt-get update
+                apt-get install -y php-ds
+        enable-php80-cli:
+          commands:
+            00_enable-php80-cli:
+              command: !Sub |
+                update-alternatives --set php /usr/bin/php8.0
+        mount-www:
+          files:
+            '/usr/sbin/mount-www':
+              user: root
+              group: root
+              mode: '000700'
+              content: !Sub |
+                #!/usr/bin/env bash
+
+                # mass deleted
+
+          commands:
+            00_create_www:
+              command: mkdir -p /mnt/www
+              test: '! test -d /mnt/www'
+            10_mount_www:
+              command: !Sub "/usr/sbin/mount-www ${AppWWWVolumeUUID}"
+              test: !Sub "! test -e /dev/disk/by-uuid/${AppWWWVolumeUUID}"
+              ignoreErrors: true
+            20_use_shared_www:
+              command: |
+                rm /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                cp /mnt/nfs/xxxxxx-common.vhost /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                perl -pi -e 's/\/mnt\/www(?!\-shared)/\/mnt\/www\-shared/g' /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                sed -i '/open_basedir.*\$site/ s/$/:\/mnt\/www\/\$site/' /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+              test: '! test -e /var/local/www-warmed'
+        start-apache:
+          files:
+            '/etc/apache2/ports.conf':
+              content: |
+                Listen 8080
+          services:
+            sysvinit:
+              apache2:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - '/etc/apache2/ports.conf'
+        add-to-target-group:
+          files:
+            '/usr/sbin/register-to-tg':
+              owner: root
+              group: root
+              mode: '000700'
+              content: !Sub |
+                #!/usr/bin/env bash
+
+                # mass deleted
+
+                ### REGISTER IN TARGET GROUP
+                aws elbv2 register-targets --region ${AWS::Region} --target-group-arn $TARGET_GROUP --targets Id=$INSTANCE_ID
+          commands:
+            00_add_to_target_group:
+              test: !Sub "! aws elbv2 describe-target-health --region ${AWS::Region} --target-group-arn ${AppTG} | grep $(curl -s http://169.254.169.254/latest/meta-data/instance-id)"
+              command: !Sub "/usr/sbin/register-to-tg ${AppTG}"
+
+        prewarm-www:
+          files:
+            '/usr/sbin/prewarm-www':
+              owner: root
+              group: root
+              mode: "000700"
+              content: !Sub |
+                #!/usr/bin/env bash
+
+                # mass deleted
+
+                # Reload Apache with local www
+                touch /var/local/www-warmed
+                rm /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                ln -sf /mnt/nfs/xxxxxx-common.vhost /etc/apache2/sites-enabled/aaaa-xxxxxx-common.vhost
+                systemctl reload apache2
+
+
+
+
+#  AppScaleUpPolicy:
+#    Type: 'AWS::AutoScaling::ScalingPolicy'
+#    Properties:
+#      AdjustmentType: PercentChangeInCapacity
+#      AutoScalingGroupName: !Ref AppASG
+#      Cooldown: 300
+#      ScalingAdjustment: 200
+#
+#  AppScaleDownPolicy:
+#    Type: 'AWS::AutoScaling::ScalingPolicy'
+#    Properties:
+#      AdjustmentType: ChangeInCapacity
+#      AutoScalingGroupName: !Ref AppASG
+#      Cooldown: 300
+#      ScalingAdjustment: -1
+
+  AppTargetCPUPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AutoScalingGroupName: !Ref AppASG
+      EstimatedInstanceWarmup: 300
+      PolicyType: TargetTrackingScaling
+      TargetTrackingConfiguration:
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ASGAverageCPUUtilization
+        TargetValue: 33
+
+#  AppCPUAlarmHigh:
+#    Type: 'AWS::CloudWatch::Alarm'
+#    Properties:
+#      AlarmDescription: 'Scale-up if CPU > 30% for 7 minutes'
+#      MetricName: CPUUtilization
+#      Namespace: 'AWS/EC2'
+#      Statistic: Average
+#      Period: 60
+#      EvaluationPeriods: 7
+#      Threshold: 30
+#      AlarmActions:
+#        - !Ref AppScaleUpPolicy
+#      Dimensions:
+#        - Name: AutoScalingGroupName
+#          Value: !Ref AppASG
+#      ComparisonOperator: GreaterThanThreshold
+#
+#  AppCPUAlarmLow:
+#    Type: 'AWS::CloudWatch::Alarm'
+#    Properties:
+#      AlarmDescription: 'Scale-down if CPU < 15% for 10 minutes'
+#      MetricName: CPUUtilization
+#      Namespace: 'AWS/EC2'
+#      Statistic: Average
+#      Period: 60
+#      EvaluationPeriods: 10
+#      Threshold: 15
+#      AlarmActions:
+#        - !Ref AppScaleDownPolicy
+#      Dimensions:
+#        - Name: AutoScalingGroupName
+#          Value: !Ref AppASG
+#      ComparisonOperator: LessThanThreshold
+
+  AppASG:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    DependsOn:
+      - AppLT
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref Subnet1
+        - !Ref Subnet2
+#        - !Ref Subnet3
+#        - !Ref Subnet4
+        - !Ref Subnet5
+        - !Ref Subnet6
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref AppLT
+            Version: 5
+        InstancesDistribution:
+          OnDemandBaseCapacity: 0
+          OnDemandPercentageAboveBaseCapacity: 0
+          SpotMaxPrice: !Ref AppSpotPrice
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      MinSize: !Ref AppMinInstances
+      MaxSize: !Ref AppMaxInstances
+      TargetGroupARNs:
+        - !Ref AppTG
+      NotificationConfiguration:
+        TopicARN: !Ref SNSTopic
+        NotificationTypes:
+          - 'autoscaling:EC2_INSTANCE_LAUNCH'
+          - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE'
+          - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+      Tags:
+        - Key: 'Name'
+          Value: !Sub '${AWS::StackName}'
+          PropagateAtLaunch: true
+        - Key: 'Role'
+          Value: 'App 8.0 Dev'
+          PropagateAtLaunch: true
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT20M
+        Count: 1
+    UpdatePolicy:
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 1
+        PauseTime: PT45M
+        WaitOnResourceSignals: true
+
+Outputs:
+  SysLogGroup:
+    Value: !GetAtt 'SysLogGroup.Arn'
+    Description: 'App Syslog CloudWatch Log Group'
+    Export:
+      Name: !Sub '${AWS::StackName}-SysLogGroup'
+
+  ApacheErrorLogGroup:
+    Value: !GetAtt 'ApacheErrorLogGroup.Arn'
+    Description: 'App Apache Error CloudWatch Log Group'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApacheErrorLogGroup'
+
+  ApacheAccessLogGroup:
+    Value: !GetAtt 'ApacheAccessLogGroup.Arn'
+    Description: 'App Apache Access CloudWatch Log Group'
+    Export:
+      Name: !Sub '${AWS::StackName}-ApacheAccessLogGroup'

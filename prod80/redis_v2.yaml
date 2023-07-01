@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Redis stack"
+
+Parameters:
+  Subnet1:
+    Description: "Select the subnet for Availability Zone A"
+    Type: "AWS::EC2::Subnet::Id"
+  Subnet2:
+    Description: "Select the subnet for Availability Zone B"
+    Type: "AWS::EC2::Subnet::Id"
+  CacheNodeType:
+    Description: "The compute and memory capacity of the nodes in the Redis Cluster"
+    Type: "String"
+    Default: "cache.t2.medium"
+    AllowedValues:
+    - cache.t2.micro
+    - cache.t3.micro
+    - cache.t2.medium
+    - cache.m3.medium
+    - cache.m5.large
+    ConstraintDescription: "must select a valid Cache Node type."
+  CacheName:
+    Description: "Redis AWS Cache Cluster Name"
+    Type: "String"
+  RedisVersion:
+    Description: "The version number of the cache engine to use for the cache clusters in this replication group"
+    Type: "String"
+    Default: "7.0"
+  NumberOfCacheNodes:
+    Description: "The number of cache clusters for this replication group. If automatic failover is enabled, you must specify a value greater than 1."
+    Type: "String"
+    Default: 2
+  CacheFailover:
+    Description: "Specifies whether a read-only replica will be automatically promoted to read/write primary if the existing primary fails."
+    Type: "String"
+    AllowedValues:
+    - true
+    - false
+    Default: true
+  VPCId:
+    Description: "A VPC ID."
+    Type: "String"
+  SecurityGroup:
+    Description: "Redis Security Group"
+    Type: "String"
+
+Resources:
+  RedisReplicationGroup:
+    Type: "AWS::ElastiCache::ReplicationGroup"
+    Properties:
+      ReplicationGroupId: !Ref "CacheName"
+      CacheNodeType: !Ref "CacheNodeType"
+      CacheSubnetGroupName: !Ref "CacheSubnets"
+      ReplicationGroupDescription: "Xxxxxx PHP-80 Production Redis Replication Group v2 (2023)"
+      Engine: "redis"
+      EngineVersion: !Ref "RedisVersion"
+      NumCacheClusters: !Ref "NumberOfCacheNodes"
+      AutomaticFailoverEnabled: !Ref "CacheFailover"
+      PreferredMaintenanceWindow: "sat:09:25-sat:22:30"
+      SecurityGroupIds:
+      - !Ref SecurityGroup
+
+  CacheSubnets:
+    Type: "AWS::ElastiCache::SubnetGroup"
+    Properties:
+      Description: "Redis cache subnet group"
+      SubnetIds:
+      - !Ref Subnet1
+      - !Ref Subnet2
+
+Outputs:
+  RedisEndpointAddress:
+    Description: "The DNS address of the ElastiCache Redis."
+    Value: !GetAtt RedisReplicationGroup.PrimaryEndPoint.Address

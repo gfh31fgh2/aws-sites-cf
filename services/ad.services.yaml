@@ -1,0 +1,100 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "Xxxxxx ActiveDirectory services stack"
+Parameters:
+  MicrosoftADPW:
+    NoEcho: "true"
+    Description: "MS AD Admin Password"
+    Type: "String"
+  XxxxxSubnet1:
+    Description: "A private VPC subnet ID in AZ1"
+    Type: "String"
+  XxxxxSubnet2:
+    Description: "A private VPC subnet ID in AZ2"
+    Type: "String"
+  VPCId:
+    Description: "A VPC ID."
+    Type: "String"
+  SsoParameter:
+    Description: "Whether to enable single sign-on for a Microsoft Active Directory in AWS."
+    Type: "String"
+    AllowedValues:
+    - true
+    - false
+    Default: "true"
+  MicrosoftADAlias:
+    Description: "A unique alias to assign to the Microsoft Active Directory in AWS."
+    Type: "String"
+    AllowedValues:
+    - true
+    - false
+    Default: "true"
+  HostedZoneName:
+    Description: "The domain name of the hosted zone managed by AWS Route53."
+    Type: "String"
+    Default: "xxxxxxx.cloud"
+  Route53HostedZoneID:
+    Description: "Route53 Hosted Zone ID"
+    Type: "String"
+  MicrosoftADName:
+    Description: "The domain name of ActiveDirectory domain in CAPITAL LETTERS."
+    Type: "String"
+    Default: "AD.xxxxxxx.cloud"
+  NetworkName:
+    Description: "The name of the network that will be used to tag all resources in the VPC"
+    Type: "String"
+    Default: "Xxxxxx"
+
+Resources:
+  ActiveDirectory:
+    Type: "AWS::DirectoryService::MicrosoftAD"
+    DeletionPolicy: Retain
+    Properties:
+      Name: !Ref "MicrosoftADName"
+      Password: !Ref "MicrosoftADPW"
+      EnableSso: !Ref "SsoParameter"
+      CreateAlias: !Ref "MicrosoftADAlias"
+      VpcSettings:
+        SubnetIds:
+        - !Ref XxxxxSubnet1
+        - !Ref XxxxxSubnet2
+        VpcId: !Ref VPCId
+  VPCDHCPOptions:
+    Type: "AWS::EC2::DHCPOptions"
+    Properties:
+      DomainName: "ec2.internal"
+      DomainNameServers:
+      - "AmazonProvidedDNS"
+      NetbiosNameServers: !GetAtt ActiveDirectory.DnsIpAddresses
+      NetbiosNodeType: 2
+      NtpServers: !GetAtt ActiveDirectory.DnsIpAddresses
+      Tags:
+      - Key: "Name"
+        Value: !Join ["-",[!Ref "NetworkName","main"]]
+  VPCDHCPOptionsAssociation:
+    Type: "AWS::EC2::VPCDHCPOptionsAssociation"
+    Properties:
+      DhcpOptionsId: !Ref "VPCDHCPOptions"
+      VpcId: !Ref "VPCId"
+  ADDNSRecord:
+    Type: "AWS::Route53::RecordSet"
+    Properties:
+      HostedZoneId: !Ref "Route53HostedZoneID"
+      Comment: "Record for ActiveDirectory"
+      Name: !Join [ "", [ "ad", ".",!Ref "HostedZoneName","."] ]
+      Type: "A"
+      TTL: 300
+      ResourceRecords: !GetAtt ActiveDirectory.DnsIpAddresses
+
+Outputs:
+  ActiveDirectoryId:
+    Description: "ActiveDirectory ID"
+    Value:
+      Ref: "ActiveDirectory"
+    Export:
+      Name: !Sub "${AWS::StackName}-ActiveDirectoryId"
+  ActiveDirectoryIpAddresses:
+    Description: "ActiveDirectory IP Addresses"
+    Value:
+      !Join [',', !GetAtt [ActiveDirectory, DnsIpAddresses]]
+    Export:
+      Name: !Sub "${AWS::StackName}-ActiveDirectoryIpAddresses"

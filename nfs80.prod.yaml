@@ -1,0 +1,759 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'xxxx NFS PHP-8 Production Services stack'
+Parameters:
+  Prod80NFSServicesInstanceType:
+    Description: 'NFS PHP-8 Production instance type'
+    Type: String
+    Default: 't2.nano'
+    AllowedValues:
+    - t2.nano
+    - t2.micro
+    - t2.small
+    - t2.medium
+    - t2.large
+    - i3.large
+    - m3.medium
+    - r4.large
+    - m5.xlarge
+    ConstraintDescription: 'must be a valid EC2 instance type.'
+  AssetsBucketName:
+    Description: 'The name of the bucket that contains your packaged source'
+    Type: String
+    Default: 'xx-systemzzz'
+  BucketName:
+    Description: 'AWS S3 bucket name for xxxx Apps'
+    Type: String
+    Default: 'xxxxxwww'
+  Prod80NFSVolumeSnapshotId:
+    Description: 'The ID of the volume snapshot for mounting on instance'
+    Type: String
+  VPCId:
+    Description: 'A VPC ID.'
+    Type: String
+  Prod80Subnet1:
+    Description: 'PHP-8 Production private VPC subnet ID in AZ1'
+    Type: String
+  Prod80Subnet2:
+    Description: 'PHP-8 Production private VPC subnet ID in AZ2'
+    Type: String
+  ServiceADPW:
+    NoEcho: "true"
+    Description: "MS AD service user password (xxxxxxxxxxxxdap)"
+    Type: "String"
+  MicrosoftADName:
+    Description: 'The domain name of ActiveDirectory domain in CAPITAL LETTERS.'
+    Type: String
+    Default: 'AD.xxxxxxx.cloud'
+  OperatorEMail:
+    Description: 'EMail address to notify if there are any scaling operations'
+    Type: String
+    AllowedPattern: "([a-zA-Z0-9_\\-\\.]+)@((\\[[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}\\.)|(([a-zA-Z0-9\\-]+\\.)+))([a-zA-Z]{2,4}|[0-9]{1,3})(\\]?)"
+    ConstraintDescription: 'must be a valid email address'
+  DDNSS3Key:
+    Description: 'The name of the ZIP package with Dynamic DNS Lambda Python function'
+    Type: String
+    Default: 'ddns.zip'
+  Prod80NFSServicesDNSEntry:
+    Description: 'DNS entry for NFS PHP-8 Production Services instances in ASG'
+    Type: String
+    Default: 'prod80-nfs.xxxxxxx.cloud'
+  Prod80NFSServicesSecurityGroup:
+    Description: "PHP-8 Production NFS EC2 Security group"
+    Type: String
+  MailOutSGid:
+    Description: "ID of xxxx Main Outbound to Mail Relay servers security group"
+    Type: String
+  KeyName:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to Services BU instance"
+    Type: "AWS::EC2::KeyPair::KeyName"
+  Prod80NFSVolumeUUID:
+    Description: 'The UUID of the volume snapshot for mounting on instance (you can find it by blkid command)'
+    Type: String
+
+Mappings:
+  AMIforNFS:
+    'us-east-1':
+      AMI: 'ami-xxxx'
+
+Resources:
+  Prod80NFSServicesProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: '/'
+      Roles:
+      - !Ref Prod80NFSServicesIAMRole
+
+  SysLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    DeletionPolicy: Retain
+    Properties:
+      LogGroupName: '/var/log/syslog/Production-8-NFS-Syslog'
+
+  Prod80NFSServicesIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'ec2.amazonaws.com'
+          Action:
+          - sts:AssumeRole
+      Path: '/'
+      Policies:
+      - PolicyName: Prod80NFSServicesPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 's3:GetObject'
+            Resource: !Sub 'arn:aws:s3:::${AssetsBucketName}/amibuilder-dependencies/*'
+          - Effect: Allow
+            Action:
+              - 's3:Get*'
+              - 's3:Put*'
+              - 's3:List*'
+              - 's3:Abort*'
+              - 's3:DeleteObject*'
+            Resource:
+              - 'arn:aws:s3:::xx-systemzzz-home-folders'
+              - 'arn:aws:s3:::xx-systemzzz-home-folders/*'
+          - Effect: Allow
+            Action:
+            - 's3:PutObject'
+            - 's3:GetObject'
+            - 's3:AbortMultipartUpload'
+            - 's3:ListMultipartUploadParts'
+            - 's3:ListBucketMultipartUploads'
+            - 's3:CreateMultipartUpload'
+            Resource:
+              - !Sub 'arn:aws:s3:::${AssetsBucketName}/logs/ssm/*'
+              - !Sub 'arn:aws:s3:::${AssetsBucketName}/pushes/*'
+          - Effect: Allow
+            Action:
+            - 'ssm:DescribeAssociation'
+            - 'ssm:DescribeAssociation'
+            - 'ssm:GetDeployablePatchSnapshotForInstance'
+            - 'ssm:GetDocument'
+            - 'ssm:GetParameters'
+            - 'ssm:ListAssociations'
+            - 'ssm:ListInstanceAssociations'
+            - 'ssm:PutInventory'
+            - 'ssm:UpdateAssociationStatus'
+            - 'ssm:UpdateInstanceAssociationStatus'
+            - 'ssm:UpdateInstanceInformation'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'ec2messages:AcknowledgeMessage'
+            - 'ec2messages:DeleteMessage'
+            - 'ec2messages:FailMessage'
+            - 'ec2messages:GetEndpoint'
+            - 'ec2messages:GetMessages'
+            - 'ec2messages:SendReply'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'cloudwatch:PutMetricData'
+            - 'ec2:DescribeTags'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'ec2:DescribeInstanceStatus'
+            Resource: '*'
+          - Effect: 'Allow'
+            Action:
+            - 'logs:CreateLogStream'
+            - 'logs:CreateLogGroup'
+            - 'logs:PutLogEvents'
+            - 'logs:DescribeLogStreams'
+            Resource:
+            - !GetAtt 'SysLogGroup.Arn'
+
+  Prod80NFSServicesLC:
+    Type: 'AWS::AutoScaling::LaunchConfiguration'
+    DependsOn: Prod80NFSServicesProfile
+    Properties:
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvdb'
+          Ebs:
+            DeleteOnTermination: false
+            SnapshotId: !Ref Prod80NFSVolumeSnapshotId
+            VolumeType: gp2
+      IamInstanceProfile: !Ref Prod80NFSServicesProfile
+      EbsOptimized: true
+      ImageId: !FindInMap [AMIforNFS, !Ref 'AWS::Region', AMI]
+      InstanceType: !Ref Prod80NFSServicesInstanceType
+      KeyName: !Ref KeyName
+      SecurityGroups:
+      - !Ref Prod80NFSServicesSecurityGroup
+      - !Ref MailOutSGid
+      UserData:
+        'Fn::Base64': !Sub |
+          #!/bin/bash -xe
+          #export DEBIAN_FRONTEND=noninteractive
+          deleted
+          cfn-init -v --stack ${AWS::StackName} --resource Prod80NFSServicesLC --configsets SetupConfigSet --region ${AWS::Region}
+          cfn-signal -e $? --stack ${AWS::StackName} --resource Prod80NFSServicesASG --region ${AWS::Region}
+    Metadata:
+      'AWS::CloudFormation::Init':
+        configSets:
+          SetupConfigSet:
+          - setup-aws-ssm-agent
+          - setup-cfn
+          - mount-s3fs-home
+          - setupldap
+          - setupntp
+          - setup-amazon-cloudwatch-agent
+          - nfs-server
+          - some-files-and-folders
+          - users-config
+          - install-subversion
+          - setup-postfix
+          - low-disk-alert
+          - setup-mlocate
+          UpdateConfigSet:
+          - mount-s3fs-home
+          - setup-aws-ssm-agent
+          - disable-apport
+          - setup-mlocate
+        setup-mlocate:
+          files:
+            '/etc/updatedb.conf':
+              content: |
+                # Mass deleted
+              user: root
+              group: root
+              mode: '000644'
+        disable-apport:
+          files:
+            '/etc/default/apport':
+              content: |
+                enabled=0
+          commands:
+            00_disable_apport:
+              command: !Sub |
+                service apport stop
+        setup-aws-ssm-agent:
+          files:
+            '/tmp/amazon-ssm-agent.deb':
+              source:
+                'Fn::Sub': "https://amazon-ssm-${AWS::Region}.s3.amazonaws.com/latest/debian_amd64/amazon-ssm-agent.deb"
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/cron.daily/ssm-log-cleanup':
+              mode: '000755'
+              owner: root
+              group: root
+              content: |
+                #!/usr/bin/env bash
+
+                find /var/lib/amazon/ssm/*/document/orchestration -maxdepth 1 -type d -mtime +30 -exec rm -rf {} +
+          commands:
+            00_setup_aws_ssm_agent:
+              command:
+                'Fn::Sub': |
+                  # Mass deleted
+                  service amazon-ssm-agent restart
+        setup-cfn:
+          files:
+            '/etc/cfn/cfn-hup.conf':
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            '/etc/cfn/hooks.d/cfn-auto-reloader.conf':
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                # Mass deleted
+                action=cfn-init --verbose --stack=${AWS::StackName} --region=${AWS::Region} --resource=Prod80NFSServicesLC  --configsets UpdateConfigSet
+                runas=root
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              cfn-hup:
+                enabled: true
+                ensureRunning: true
+                files:
+                - '/etc/cfn/cfn-hup.conf'
+                - '/etc/cfn/hooks.d/cfn-auto-reloader.conf'
+        mount-s3fs-home:
+          packages:
+            apt:
+              fuse: []
+              libfuse-dev: []
+              libc6: []
+#              libcurl3: []
+#              libcurl3-gnutls: []
+              libcurl4: []
+              libcurl4-openssl-dev: []
+              libfuse2: []
+              libgcc1: []
+              libgcrypt20: []
+              libgnutls30: []
+              libstdc++6: []
+              libxml2: []
+              libxml2-dev: []
+              mime-support: []
+              openssl: []
+              libssl-dev: []
+              s3fs: []
+#          files:
+#            "/usr/bin/s3fs":
+#              source: https://xx-systemzzz.s3.amazonaws.com/s3fs/1.85/s3fs
+#              owner: root
+#              group: root
+#              mode: '000755'
+#            "/usr/share/man/man1/s3fs.1":
+#              source: https://xx-systemzzz.s3.amazonaws.com/s3fs/1.85/s3fs.1
+#              owner: root
+#              group: root
+#              mode: '000644'
+          commands:
+            10_mount_s3fs:
+              test: "! mount | grep '/opt/home type fuse.s3fs'"
+              command: |
+
+                mkdir -p /opt/home
+                s3fs -o iam_role -o allow_other xx-systemzzz-home-folders /opt/home
+            20_persist_s3fs_mount:
+              test: "! grep 's3fs#xx-systemzzz-home-folders' /etc/fstab"
+              command: |
+                sed '/\/home\/ nfs4/d' -i /etc/fstab
+                echo 's3fs#xx-systemzzz-home-folders /opt/home fuse _netdev,allow_other,iam_role 0 0' | tee -a /etc/fstab
+        some-files-and-folders:
+          commands:
+            10_adding_folders:
+              command: |
+                mkdir -p /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs
+                mkdir -p /mnt/nfs/_common/templates
+                mkdir -p /mnt/nfs/_common/logs
+                mkdir -p /mnt/nfs/_common/geoip
+                mkdir -p /mnt/nfs/_common/error-pages
+                mkdir -p /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/_common/templates
+                mkdir -p /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/_common/logs
+                mkdir -p /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/_common/geoip
+                mkdir -p /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/_common/error-pages
+#            20_adding_files:
+#              command: |
+#                echo ' ' > /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/create_user_groups.sh
+          files:
+            '/mnt/nfs/_common/templates/robots.txt':
+              content: !Sub |
+                User-Agent: *
+                Disallow: /
+
+              mode: '000644'
+              owner: root
+              group: root
+            '/mnt/nfs/_common/templates/403.htm':
+              content: !Sub |
+                <!DOCTYPE>
+                <html>
+                # Mass deleted
+                </html>
+              mode: '000644'
+              owner: root
+              group: root
+            '/mnt/nfs/_common/templates/404.htm':
+              content: !Sub |
+                <!DOCTYPE>
+                <html>
+                # Mass deleted
+                </html>
+              mode: '000644'
+              owner: root
+              group: root
+            '/xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/xxxx.sh':
+              content: !Sub |
+                # comment 
+              mode: '000775'
+              owner: root
+              group: root
+            '/xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/www/xxxx.sh':
+              content: !Sub |
+                # comment 
+              mode: '000644'
+              owner: root
+              group: root
+            '/xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/xxxxxx-common.vhost':
+              content: !Sub |
+                # Mass deleted
+                deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/xxx-srv-app-server-local-www.vhost':
+              content: !Sub |
+                # Use VAlias Xxxxxx
+              mode: '000644'
+              owner: root
+              group: root
+            '/mnt/www/_default/elbhealthcheck.php':
+              content: !Sub |
+                <?php
+                header("HTTP/1.0 200 OK");
+                echo "# Mass deleted";
+              mode: '000644'
+              owner: root
+              group: root
+            '/mnt/www/_default/index.php':
+              content: !Sub |
+                <?php    header("HTTP/1.0 404 Not Found"); ?>
+                <h1>404 Not Found</h1>
+                The page that you have requested could not be found.
+              mode: '000644'
+              owner: root
+              group: root
+            '/mnt/nfs/_common/geoip/GeoLiteCity.dat':
+              source: https://xx-systemzzz.s3.amazonaws.com/GeoLiteCity.dat
+              owner: root
+              group: root
+              mode: '000755'   
+        setupldap:
+          packages:
+            apt:
+              sssd: []
+              samba-common-bin: []
+              samba-libs: []
+              sssd-tools: []
+              krb5-user: []
+              adcli: []
+              realmd: []
+              chrony: []
+              ntpdate: []
+              libsss-sudo: []
+              packagekit: []
+              ldap-utils: []
+              ldapscripts: []
+          files:
+            '/etc/krb5.conf':
+              content: !Sub |
+                [libdefaults]
+                deleted
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/sssd/sssd.conf':
+              content: !Sub |
+                [sssd]
+                config_file_version = 2
+                deleted
+              mode: '00600'
+              owner: root
+              group: root
+            '/etc/sudoers.d/domain_admins':
+              content: |
+                User_Alias ADMINS = %Admins, %WebserverAdmins
+                ADMINS ALL=(ALL) ALL
+              owner: root
+              group: root
+              mode: '00440'
+          commands:
+            00_setup_ad_login:
+              command: !Sub |
+                sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+                echo "session required pam_mkhomedir.so skel=/etc/skel/ umask=0077" | tee -a /etc/pam.d/common-session
+                chmod 700 /home/ubuntu
+                service sssd restart
+                service ssh restart
+        setupntp:
+          packages:
+            apt:
+              chrony: []
+              ntpdate: []
+          files:
+            '/etc/chrony/chrony.conf':
+              content: !Sub |
+                server xxxx prefer iburst
+                deleted
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_ntp:
+              command: !Sub |
+                service chrony stop
+                ntpdate xxxxxx
+                service chrony start
+          services:
+            sysvinit:
+              chrony:
+                enabled: true
+                ensureRunning: true
+                files:
+                - '/etc/chrony/chrony.conf'
+        setup-awslogs:
+          files:
+            '/tmp/awslog.conf':
+              content: !Sub |
+                [general]
+                # Mass deleted
+                log_group_name = ${SysLogGroup}
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/awslogs-agent-setup.py':
+              source: !Sub 'https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py'
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup_awslog:
+              command: !Sub |
+                python /tmp/awslogs-agent-setup.py -n -r ${AWS::Region} -c /tmp/awslog.conf || error_exit 'Failed to run CloudWatch Logs agent setup'
+                systemctl enable awslogs
+                systemctl restart awslogs
+        setup-amazon-cloudwatch-agent:
+          files:
+            '/tmp/AmazonCloudWatchAgent.zip':
+              source: !Sub 'https://s3.amazonaws.com/amazoncloudwatch-agent/linux/amd64/latest/AmazonCloudWatchAgent.zip'
+              mode: '000644'
+              owner: root
+              group: root
+            '/tmp/AmazonCloudWatchAgent.config':
+              content: !Sub |
+                {
+                        "logs": {
+                                "logs_collected": {
+                                        "files": {
+                                                "collect_list": [
+                                                        {
+                                                                "file_path": "/var/log/syslog",
+                                                                "log_group_name": "${SysLogGroup}",
+                                                                "log_stream_name": "{instance_id}",
+                                                                "timestamp_format": "%b %-d %H:%M:%S"
+                                                        }
+                                                ]
+                                        }
+                                }
+                        }
+                }
+              mode: '000644'
+              owner: root
+              group: root
+          commands:
+            00_setup-amazon-cloudwatch-agent:
+              command: !Sub |
+                cd /tmp
+                unzip AmazonCloudWatchAgent.zip
+                ./install.sh
+                /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/tmp/AmazonCloudWatchAgent.config -s
+                systemctl enable amazon-cloudwatch-agent
+                service amazon-cloudwatch-agent restart
+        nfs-server:
+          files:
+            '/etc/exports':
+              content: !Sub |
+                /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/www *(rw,async,no_subtree_check,root_squash)
+                /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs *(rw,async,no_subtree_check,root_squash)
+              mode: '000644'
+              owner: root
+              group: root
+            '/etc/default/nfs-kernel-server':
+              content: !Sub |
+                RPCNFSDCOUNT=32
+                RPCNFSDPRIORITY=0
+                RPCMOUNTDOPTS="--manage-gids"
+                NEED_SVCGSSD=""
+                RPCSVCGSSDOPTS=""
+                RPCNFSDOPTS=""
+              mode: '000644'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              nfs-kernel-server:
+                enabled: true
+                ensureRunning: true
+                files:
+                - '/etc/exports'
+          commands:
+            00_setup_nfs:
+              command: !Sub |
+                umount /mnt
+                sed -i '/xvdb/d' /etc/fstab
+                mkdir -p /mnt/nfs
+                echo "UUID=${Prod80NFSVolumeUUID} /mnt/nfs ext4 defaults,barrier=0,noatime 0 0" >> /etc/fstab
+                mount /mnt/nfs
+                systemctl restart nfs-config
+                systemctl restart rpcbind
+                systemctl restart rpc-statd
+                systemctl restart nfs-server
+        users-config:
+          commands:
+            00_add_users_production_php80:
+              command: !Sub |
+                /xxxxmnt/xxxxnfs/xxxxxprod/xxxxphp80/nfs/create_user_groups.sh
+        install-subversion:
+          packages:
+            apt:
+              subversion: []
+        setup-postfix:
+          packages:
+            apt:
+              mailutils: []
+              postfix: []
+          commands:
+            00_setuppostfix:
+              command: !Sub |
+                echo "xxxxx" > /etc/mailname
+                postconf -e "smtp_sasl_auth_enable = yes"
+                deleted
+                echo -e "xxx" > /etc/postfix/saslpasswd
+                postmap /etc/postfix/saslpasswd
+                rm -rf /etc/postfix/saslpasswd
+                /etc/init.d/postfix restart
+        low-disk-alert:
+          files:
+            '/etc/cron.hourly/low-disk-alert':
+              content: |
+                #!/bin/bash
+                deleted
+              mode: '000755'
+              owner: root
+              group: root
+
+  Prod80NFSServicesASG:
+    Type: 'AWS::AutoScaling::AutoScalingGroup'
+    Properties:
+      Cooldown: 600
+      DesiredCapacity: 1
+      HealthCheckType: EC2
+      LaunchConfigurationName: !Ref Prod80NFSServicesLC
+      MaxSize: 1
+      MinSize: 1
+      NotificationConfigurations:
+        - NotificationTypes:
+            - 'autoscaling:EC2_INSTANCE_LAUNCH'
+            - 'autoscaling:EC2_INSTANCE_LAUNCH_ERROR'
+            - 'autoscaling:EC2_INSTANCE_TERMINATE'
+            - 'autoscaling:EC2_INSTANCE_TERMINATE_ERROR'
+            - 'autoscaling:TEST_NOTIFICATION'
+          TopicARN: !Ref Prod80NFSSNS
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}'
+          PropagateAtLaunch: true
+        - Key: CNAME
+          Value: !Sub '${Prod80NFSServicesDNSEntry}.'
+          PropagateAtLaunch: true
+      VPCZoneIdentifier:
+        - !Ref Prod80Subnet1
+        - !Ref Prod80Subnet2
+  Prod80NFSSNS:
+    Type: 'AWS::SNS::Topic'
+    Properties:
+      Subscription:
+      - Endpoint: !Ref OperatorEMail
+        Protocol: email
+
+  Prod80NFSServicesDDNSLambdaRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'lambda.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: Prod80NFSServicesDDNSLambdaPolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'ec2:Describe*'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'dynamodb:*'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'logs:CreateLogGroup'
+            - 'logs:CreateLogStream'
+            - 'logs:PutLogEvents'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+            - 'route53:*'
+            Resource: '*'
+  Prod80NFSServicesDDNSLambda:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: !Ref AssetsBucketName
+        S3Key: !Sub 'amibuilder-dependencies/${DDNSS3Key}'
+      Description: 'Lambda function on Python for creating/deleting entries for ASG'
+      Handler: 'ddns.lambda_handler'
+      Role: !GetAtt 'Prod80NFSServicesDDNSLambdaRole.Arn'
+      Runtime: 'python3.9'
+      Timeout: 30
+
+  Prod80NFSServicesASGEventtoLambdaRole:
+    Type: 'AWS::IAM::Role'
+    DependsOn: Prod80NFSServicesDDNSLambda
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - 'events.amazonaws.com'
+          Action:
+          - 'sts:AssumeRole'
+      Path: '/'
+      Policies:
+      - PolicyName: Prod80NFSServicesASGEventtoLambda
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'lambda:InvokeFunction'
+            Resource: !GetAtt 'Prod80NFSServicesDDNSLambda.Arn'
+
+  Prod80NFSServicesASGEventtoLambda:
+    Type: 'AWS::Events::Rule'
+    DependsOn: Prod80NFSServicesASGEventtoLambdaRole
+    Properties:
+      Description: 'Prod80NFSServicesASG Events Rule'
+      EventPattern:
+        source:
+        - 'aws.autoscaling'
+        detail-type:
+        - 'EC2 Instance Launch Successful'
+        - 'EC2 Instance Terminate Successful'
+        - 'EC2 Instance Launch Unsuccessful'
+        - 'EC2 Instance Terminate Unsuccessful'
+        - 'EC2 Instance-launch Lifecycle Action'
+        - 'EC2 Instance-terminate Lifecycle Action'
+        detail:
+          AutoScalingGroupName:
+          - !Ref Prod80NFSServicesASG
+      RoleArn: !GetAtt 'Prod80NFSServicesASGEventtoLambdaRole.Arn'
+      State: 'ENABLED'
+      Targets:
+        - Arn: !GetAtt 'Prod80NFSServicesDDNSLambda.Arn'
+          Id: 'Prod80NFSServicesDDNSLambdaTarget'
+
+Outputs:
+  Prod80NFSServicesDNSEntry:
+    Value: !Ref Prod80NFSServicesDNSEntry
+    Description: 'DNS entry for NFS PHP-8 Production Services instances in ASG'
